@@ -9,6 +9,54 @@ async function log(env,u,w,action){await env.DB.prepare('INSERT INTO audit(id,ac
 async function identity(r,env){const id=r.headers.get('oai-authenticated-user-id'),email=r.headers.get('oai-authenticated-user-email');if(!id||!email)throw {status:401,message:'로그인이 필요합니다.'};return {id,email,admin:!!env.SUPERADMIN_EMAIL&&email.toLowerCase()===env.SUPERADMIN_EMAIL.toLowerCase()}}
 async function account(env,u){const a=await env.DB.prepare('SELECT * FROM accounts WHERE user_id=?').bind(u.id).first();if(!a)throw {status:403,message:'먼저 회원 정보를 등록해 주세요.'};if(a.status!=='active')throw {status:403,message:'이용이 정지된 계정입니다.'};return a}
 async function workspace(env,u,url){const a=await account(env,u),wanted=url.searchParams.get('workspace');if(wanted&&!u.admin&&wanted!==a.workspace_id)throw {status:403,message:'다른 계정의 공간에 접근할 수 없습니다.'};const id=u.admin&&wanted?wanted:a.workspace_id;const w=await env.DB.prepare('SELECT * FROM workspaces WHERE id=?').bind(id).first();if(!w)throw {status:404,message:'공간을 찾을 수 없습니다.'};return {a,w}}
+// Claim the staged backup only after Sites has authenticated the designated owner.
+async function claimOwnerBackup(env, user) {
+  if (!user.admin || user.email.toLowerCase() !== env.OWNER_BACKUP_EMAIL?.toLowerCase()) return;
+  const parts = Number(env.OWNER_BACKUP_PARTS);
+  if (!Number.isInteger(parts) || parts < 1 || parts > 20) return;
+
+  const marker = 'owner-backup-2026-11-19';
+  const alreadyImported = () => env.DB.prepare('SELECT id FROM audit WHERE id=?').bind(marker).first();
+  if (await alreadyImported()) return;
+
+  const data = JSON.stringify(checkData(JSON.parse(
+    Array.from({length: parts}, (_, i) => env['OWNER_BACKUP_' + i]).join('')
+  )));
+  const current = await env.DB.prepare(
+    'SELECT a.status,w.id,w.data,w.revision,w.file_bytes FROM accounts a JOIN workspaces w ON w.id=a.workspace_id WHERE a.user_id=?'
+  ).bind(user.id).first();
+
+  if (current) {
+    const empty = Object.values(JSON.parse(current.data)).every(value => Array.isArray(value) && value.length === 0);
+    if (current.status !== 'active' || current.file_bytes !== 0 || !empty) {
+      throw {status:409,message:'기존 작업 공간에 데이터가 있어 백업 자동 이전을 중단했습니다.'};
+    }
+    const results = await env.DB.batch([
+      env.DB.prepare('UPDATE workspaces SET data=?,revision=revision+1 WHERE id=? AND owner_id=? AND revision=? AND NOT EXISTS (SELECT 1 FROM audit WHERE id=?)')
+        .bind(data,current.id,user.id,current.revision,marker),
+      env.DB.prepare('INSERT INTO audit(id,actor_id,workspace_id,action) SELECT ?,?,?,? WHERE changes()>0')
+        .bind(marker,user.id,current.id,'workspace.backup.import'),
+    ]);
+    if (!results[0].meta.changes && !await alreadyImported()) {
+      throw {status:409,message:'작업 공간이 변경되었습니다. 다시 로그인해 주세요.'};
+    }
+    return;
+  }
+
+  const id = uid();
+  try {
+    await env.DB.batch([
+      env.DB.prepare('INSERT INTO workspaces(id,owner_id,title,data,revision) VALUES(?,?,?,?,1)')
+        .bind(id,user.id,'예니센스',data),
+      env.DB.prepare('INSERT INTO accounts(user_id,email,name,workspace_id) VALUES(?,?,?,?)')
+        .bind(user.id,user.email,'예니센스 관리자',id),
+      env.DB.prepare('INSERT INTO audit(id,actor_id,workspace_id,action) VALUES(?,?,?,?)')
+        .bind(marker,user.id,id,'workspace.backup.import'),
+    ]);
+  } catch (error) {
+    if (!(await alreadyImported())) throw error;
+  }
+}
 export async function handle(r,env){const url=new URL(r.url),p=url.pathname;
  if(p==='/icon.png')return new Response(Uint8Array.from(atob(ICON),c=>c.charCodeAt(0)),{headers:{'Content-Type':'image/png'}});
  if(p==='/style.css')return new Response(CSS,{headers:{'Content-Type':'text/css; charset=utf-8'}});
@@ -20,7 +68,7 @@ export async function handle(r,env){const url=new URL(r.url),p=url.pathname;
  if(foreign(r))return json({error:'다른 사이트의 요청은 허용하지 않습니다.'},403);
  const u=await identity(r,env);
  if(!env.DB)return json({error:'클라우드 저장소를 준비 중입니다.'},503);
- if(p==='/api/session'&&r.method==='GET'){const a=await env.DB.prepare('SELECT name,workspace_id,status FROM accounts WHERE user_id=?').bind(u.id).first();return json({email:u.email,admin:u.admin,account:a})}
+ if(p==='/api/session'&&r.method==='GET'){await claimOwnerBackup(env,u);const a=await env.DB.prepare('SELECT name,workspace_id,status FROM accounts WHERE user_id=?').bind(u.id).first();return json({email:u.email,admin:u.admin,account:a})}
  if(p==='/api/register'&&r.method==='POST'){
  const x=await readJson(r,4096);if(!x||typeof x.name!=='string'||!x.name.trim()||x.name.length>60||typeof x.title!=='string'||!x.title.trim()||x.title.length>80||x.adminAccessAcknowledged!==true||Object.keys(x).some(k=>!['name','title','adminAccessAcknowledged'].includes(k)))return json({error:'이름·공간 이름과 관리자 접근 안내 확인이 필요합니다.'},400);
  const exists=await env.DB.prepare('SELECT user_id FROM accounts WHERE user_id=?').bind(u.id).first();if(exists)return json({error:'이미 등록된 계정입니다.'},409);

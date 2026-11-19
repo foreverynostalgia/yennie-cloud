@@ -32,3 +32,16 @@ const audit=await (await call('/api/audit')).json();assert.ok(audit.events.some(
 const html=await (await worker.fetch(new Request('https://cloud.test/'),env)).text();assert.ok(!html.includes('Alice private'));assert.ok(!html.includes('owner@test.local'));
 assert.equal((await worker.fetch(new Request('https://cloud.test/api/booking/data'),env)).status,401);
 console.log('PASS anonymous denial, isolated signup/workspaces/files, privilege tampering, admin access/audit, optimistic concurrency, CSRF, unsafe files, suspension and no legacy relay.');
+const backup = {students:[{id:'backup-student',name:'Migration fixture'}], classes:[], notes:[], scores:[{id:'backup-score'}]};
+Object.assign(env,{OWNER_BACKUP_EMAIL:'owner@test.local',OWNER_BACKUP_PARTS:'1',OWNER_BACKUP_0:JSON.stringify(backup)});
+assert.equal((await call('/api/session',{id:'alice'})).status,200);
+assert.equal((await call('/api/session',admin)).status,200);
+assert.deepEqual((await (await call('/api/workspace',admin)).json()).data,backup);
+assert.equal((await (await call('/api/workspace',admin)).json()).revision,1);
+assert.equal((await call('/api/session',admin)).status,200);
+assert.equal((await (await call('/api/workspace',admin)).json()).revision,1);
+assert.equal((await call('/api/workspace?workspace='+(await (await call('/api/workspace',admin)).json()).id)).status,403);
+sqlite.exec("DELETE FROM audit WHERE id='owner-backup-2026-11-19'; DELETE FROM accounts WHERE user_id='owner'; DELETE FROM workspaces WHERE owner_id='owner'");
+assert.equal((await call('/api/session',admin)).status,200);
+assert.deepEqual((await (await call('/api/workspace',admin)).json()).data,backup);
+console.log('PASS owner-only backup claim for existing empty and new accounts, idempotency and isolation.');
