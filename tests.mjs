@@ -1,0 +1,34 @@
+import assert from 'node:assert/strict';
+import {DatabaseSync} from 'node:sqlite';
+import {readFile} from 'node:fs/promises';
+import worker from './dist/server/index.js';
+const sqlite=new DatabaseSync(':memory:');sqlite.exec(await readFile('drizzle/0000_cloud.sql','utf8'));
+const objects=new Map(),env={SUPERADMIN_EMAIL:'owner@test.local',BUCKET:{async put(k,b){objects.set(k,b)},async get(k){return objects.has(k)?{body:objects.get(k)}:null},async delete(k){objects.delete(k)}},DB:{prepare(sql){return {bind(...args){this.args=args;return this},async first(){return sqlite.prepare(sql).get(...(this.args||[]))||null},async all(){return {results:sqlite.prepare(sql).all(...(this.args||[]))}},async run(){return {meta:{changes:Number(sqlite.prepare(sql).run(...(this.args||[])).changes)}}}}},async batch(stmts){sqlite.exec('BEGIN');try{const result=[];for(const q of stmts)result.push(await q.run());sqlite.exec('COMMIT');return result}catch(e){sqlite.exec('ROLLBACK');throw e}}}};
+const headers=(id,mail=id+'@test.local')=>({'oai-authenticated-user-id':id,'oai-authenticated-user-email':mail});
+async function call(path,{id='alice',mail,method='GET',data,extra={},bytes}={}){return worker.fetch(new Request('https://cloud.test'+path,{method,headers:{...headers(id,mail),'Content-Type':'application/json',...extra},...(data!==undefined?{body:JSON.stringify(data)}:{}),...(bytes?{body:bytes}:{})}),env)}
+assert.equal((await worker.fetch(new Request('https://cloud.test/api/session'),env)).status,401);
+for(const [id,mail] of [['alice',undefined],['bob',undefined],['owner','owner@test.local']]){assert.equal((await call('/api/register',{id,mail,method:'POST',data:{name:id,title:id+' classroom',adminAccessAcknowledged:true}})).status,201)}
+const alice=await (await call('/api/workspace')).json(),bob=await (await call('/api/workspace',{id:'bob'})).json();assert.notEqual(alice.id,bob.id);
+assert.equal((await call('/api/workspace?workspace='+bob.id)).status,403);
+assert.equal((await call('/api/workspace?workspace='+bob.id,{method:'PUT',data:{revision:0,data:{students:[]}}})).status,403);
+assert.equal((await call('/api/admin/accounts')).status,403);
+assert.equal((await call('/api/register',{id:'malicious',method:'POST',data:{name:'x',title:'x',adminAccessAcknowledged:true,role:'admin'}})).status,400);
+assert.equal((await call('/api/workspace',{method:'PUT',data:{revision:0,data:{students:[{name:'Alice private'}],classes:[],notes:[]}}})).status,200);
+assert.equal((await call('/api/workspace',{method:'PUT',data:{revision:0,data:{students:[]}}})).status,409);
+assert.equal((await (await call('/api/workspace',{id:'bob'})).json()).data.students.length,0);
+assert.equal((await call('/api/workspace',{method:'PUT',extra:{Origin:'https://evil.test'},data:{}})).status,403);
+assert.equal((await call('/api/workspace',{method:'PUT',data:{revision:1,data:JSON.parse('{"__proto__":{"admin":true}}')}})).status,400);
+const admin={id:'owner',mail:'owner@test.local'};assert.equal((await call('/api/admin/accounts',admin)).status,200);
+assert.equal((await call('/api/workspace?workspace='+alice.id,admin)).status,200);
+const bytes=new Uint8Array([137,80,78,71,13,10,26,10]);const file=await call('/api/files',{method:'POST',bytes,extra:{'Content-Type':'image/png','X-File-Name':'private.png'}});assert.equal(file.status,201);const fid=(await file.json()).id;
+assert.equal((await call('/api/file?id='+fid,{id:'bob'})).status,404);
+const own=await call('/api/file?id='+fid);assert.equal(own.status,200);assert.match(own.headers.get('Content-Disposition'),/^attachment/);
+assert.equal((await call('/api/file?workspace='+alice.id+'&id='+fid,admin)).status,200);
+assert.equal((await call('/api/files',{method:'POST',bytes:new TextEncoder().encode('<svg onload=alert(1)>'),extra:{'Content-Type':'image/svg+xml','X-File-Name':'bad.svg'}})).status,400);
+assert.equal((await call('/api/admin/status',{...admin,method:'POST',data:{userId:'bob',status:'suspended'}})).status,200);
+assert.equal((await call('/api/workspace',{id:'bob'})).status,403);
+assert.equal((await call('/api/admin/status',{...admin,method:'POST',data:{userId:'owner',status:'suspended'}})).status,400);
+const audit=await (await call('/api/audit')).json();assert.ok(audit.events.some(x=>x.action==='admin.workspace.read'));assert.ok(audit.events.some(x=>x.action==='admin.file.download'));
+const html=await (await worker.fetch(new Request('https://cloud.test/'),env)).text();assert.ok(!html.includes('Alice private'));assert.ok(!html.includes('owner@test.local'));
+assert.equal((await worker.fetch(new Request('https://cloud.test/api/booking/data'),env)).status,401);
+console.log('PASS anonymous denial, isolated signup/workspaces/files, privilege tampering, admin access/audit, optimistic concurrency, CSRF, unsafe files, suspension and no legacy relay.');
