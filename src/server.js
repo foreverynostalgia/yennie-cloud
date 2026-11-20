@@ -9,40 +9,57 @@ async function log(env,u,w,action){await env.DB.prepare('INSERT INTO audit(id,ac
 async function identity(r,env){const id=r.headers.get('oai-authenticated-user-id'),email=r.headers.get('oai-authenticated-user-email');if(!id||!email)throw {status:401,message:'로그인이 필요합니다.'};return {id,email,admin:!!env.SUPERADMIN_EMAIL&&email.toLowerCase()===env.SUPERADMIN_EMAIL.toLowerCase()}}
 async function account(env,u){const a=await env.DB.prepare('SELECT * FROM accounts WHERE user_id=?').bind(u.id).first();if(!a)throw {status:403,message:'먼저 회원 정보를 등록해 주세요.'};if(a.status!=='active')throw {status:403,message:'이용이 정지된 계정입니다.'};return a}
 async function workspace(env,u,url){const a=await account(env,u),wanted=url.searchParams.get('workspace');if(wanted&&!u.admin&&wanted!==a.workspace_id)throw {status:403,message:'다른 계정의 공간에 접근할 수 없습니다.'};const id=u.admin&&wanted?wanted:a.workspace_id;const w=await env.DB.prepare('SELECT * FROM workspaces WHERE id=?').bind(id).first();if(!w)throw {status:404,message:'공간을 찾을 수 없습니다.'};return {a,w}}
-// Claim the staged backup only after Sites has authenticated the designated owner.
-async function claimOwnerBackup(env, user) {
-  if (!user.admin || user.email.toLowerCase() !== env.OWNER_BACKUP_EMAIL?.toLowerCase()) return;
+const backupMarker = 'owner-backup-2026-11-19';
+
+function hasOwnerBackup(env, user) {
   const parts = Number(env.OWNER_BACKUP_PARTS);
-  if (!Number.isInteger(parts) || parts < 1 || parts > 20) return;
+  return user.admin && user.email.toLowerCase() === env.OWNER_BACKUP_EMAIL?.toLowerCase()
+    && Number.isInteger(parts) && parts >= 1 && parts <= 20;
+}
 
-  const marker = 'owner-backup-2026-11-19';
+function ownerBackup(env) {
+  const parts = Number(env.OWNER_BACKUP_PARTS);
+  return checkData(JSON.parse(Array.from({length: parts}, (_, i) => env['OWNER_BACKUP_' + i]).join('')));
+}
+
+function mergeBackup(backup, current) {
+  const merged = {...backup, ...current};
+  for (const [key, entries] of Object.entries(backup)) {
+    if (!Array.isArray(entries) || !Array.isArray(current[key])) continue;
+    const existingIds = new Set(current[key].map(entry => entry?.id).filter(Boolean));
+    const existingValues = new Set(current[key].map(entry => JSON.stringify(entry)));
+    merged[key] = [...current[key], ...entries.filter(entry =>
+      !existingIds.has(entry?.id) && !existingValues.has(JSON.stringify(entry))
+    )];
+  }
+  return checkData(merged);
+}
+
+async function claimOwnerBackup(env, user) {
+  const marker = backupMarker;
   const alreadyImported = () => env.DB.prepare('SELECT id FROM audit WHERE id=?').bind(marker).first();
-  if (await alreadyImported()) return;
+  if (await alreadyImported()) return true;
 
-  const data = JSON.stringify(checkData(JSON.parse(
-    Array.from({length: parts}, (_, i) => env['OWNER_BACKUP_' + i]).join('')
-  )));
+  const backup = ownerBackup(env);
   const current = await env.DB.prepare(
-    'SELECT a.status,w.id,w.data,w.revision,w.file_bytes FROM accounts a JOIN workspaces w ON w.id=a.workspace_id WHERE a.user_id=?'
+    'SELECT a.status,w.id,w.data,w.revision FROM accounts a JOIN workspaces w ON w.id=a.workspace_id WHERE a.user_id=? AND w.owner_id=a.user_id'
   ).bind(user.id).first();
 
   if (current) {
-    const empty = Object.values(JSON.parse(current.data)).every(value => Array.isArray(value) && value.length === 0);
-    if (current.status !== 'active' || current.file_bytes !== 0 || !empty) {
-      throw {status:409,message:'기존 작업 공간에 데이터가 있어 백업 자동 이전을 중단했습니다.'};
-    }
-    const results = await env.DB.batch([
+    if (current.status !== 'active') return false;
+    const data = JSON.stringify(mergeBackup(backup, JSON.parse(current.data)));
+    await env.DB.batch([
       env.DB.prepare('UPDATE workspaces SET data=?,revision=revision+1 WHERE id=? AND owner_id=? AND revision=? AND NOT EXISTS (SELECT 1 FROM audit WHERE id=?)')
         .bind(data,current.id,user.id,current.revision,marker),
-      env.DB.prepare('INSERT INTO audit(id,actor_id,workspace_id,action) SELECT ?,?,?,? WHERE changes()>0')
-        .bind(marker,user.id,current.id,'workspace.backup.import'),
+      env.DB.prepare(`INSERT INTO audit(id,actor_id,workspace_id,action)
+        SELECT ?,?,?,? FROM workspaces WHERE id=? AND owner_id=? AND revision=? AND data=?
+        AND NOT EXISTS (SELECT 1 FROM audit WHERE id=?)`)
+        .bind(marker,user.id,current.id,'workspace.backup.import',current.id,user.id,current.revision+1,data,marker),
     ]);
-    if (!results[0].meta.changes && !await alreadyImported()) {
-      throw {status:409,message:'작업 공간이 변경되었습니다. 다시 로그인해 주세요.'};
-    }
-    return;
+    return Boolean(await alreadyImported());
   }
 
+  const data = JSON.stringify(backup);
   const id = uid();
   try {
     await env.DB.batch([
@@ -56,19 +73,40 @@ async function claimOwnerBackup(env, user) {
   } catch (error) {
     if (!(await alreadyImported())) throw error;
   }
+  return true;
 }
 export async function handle(r,env){const url=new URL(r.url),p=url.pathname;
  if(p==='/icon.png')return new Response(Uint8Array.from(atob(ICON),c=>c.charCodeAt(0)),{headers:{'Content-Type':'image/png'}});
  if(p==='/style.css')return new Response(CSS,{headers:{'Content-Type':'text/css; charset=utf-8'}});
  if(p==='/client.js')return new Response(CLIENT,{headers:{'Content-Type':'text/javascript; charset=utf-8'}});
  if(p==='/manifest.webmanifest')return json({name:'YENNIE SENSE Cloud',short_name:'YENNIE SENSE',start_url:'/',display:'standalone',icons:[{src:'/icon.png',sizes:'192x192',type:'image/png'}],theme_color:'#eaf4fc',background_color:'#eaf4fc'});
- if(p==='/')return new Response(HTML,{headers:{'Content-Type':'text/html; charset=utf-8'}});
+ if(p==='/'||p==='/signup')return new Response(HTML,{headers:{'Content-Type':'text/html; charset=utf-8'}});
  if(!p.startsWith('/api/'))return json({error:'Not Found'},404);
  if(!['GET','POST','PUT'].includes(r.method))return json({error:'Method Not Allowed'},405);
  if(foreign(r))return json({error:'다른 사이트의 요청은 허용하지 않습니다.'},403);
  const u=await identity(r,env);
  if(!env.DB)return json({error:'클라우드 저장소를 준비 중입니다.'},503);
- if(p==='/api/session'&&r.method==='GET'){await claimOwnerBackup(env,u);const a=await env.DB.prepare('SELECT name,workspace_id,status FROM accounts WHERE user_id=?').bind(u.id).first();return json({email:u.email,admin:u.admin,account:a})}
+ if(p==='/api/session'&&r.method==='GET'){
+  let backup = null;
+  if (hasOwnerBackup(env,u)) {
+    try {
+      backup = await claimOwnerBackup(env,u) ? 'imported' : 'pending';
+    } catch {
+      backup = 'pending';
+    }
+  }
+  const accountRow = await env.DB.prepare('SELECT name,workspace_id,status FROM accounts WHERE user_id=?').bind(u.id).first();
+  return json({email:u.email,admin:u.admin,account:accountRow,backup});
+ }
+ if(p==='/api/owner-backup'&&r.method==='GET'){
+  if(!hasOwnerBackup(env,u)) return json({error:'백업을 찾을 수 없습니다.'},404);
+  const a = await account(env,u);
+  await log(env,u,a.workspace_id,'workspace.backup.download');
+  return new Response(JSON.stringify(ownerBackup(env)),{headers:{
+    'Content-Type':'application/json',
+    'Content-Disposition':'attachment; filename="yensense-backup-2026-11-19.json"',
+  }});
+ }
  if(p==='/api/register'&&r.method==='POST'){
  const x=await readJson(r,4096);if(!x||typeof x.name!=='string'||!x.name.trim()||x.name.length>60||typeof x.title!=='string'||!x.title.trim()||x.title.length>80||x.adminAccessAcknowledged!==true||Object.keys(x).some(k=>!['name','title','adminAccessAcknowledged'].includes(k)))return json({error:'이름·공간 이름과 관리자 접근 안내 확인이 필요합니다.'},400);
  const exists=await env.DB.prepare('SELECT user_id FROM accounts WHERE user_id=?').bind(u.id).first();if(exists)return json({error:'이미 등록된 계정입니다.'},409);

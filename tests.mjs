@@ -45,3 +45,32 @@ sqlite.exec("DELETE FROM audit WHERE id='owner-backup-2026-11-19'; DELETE FROM a
 assert.equal((await call('/api/session',admin)).status,200);
 assert.deepEqual((await (await call('/api/workspace',admin)).json()).data,backup);
 console.log('PASS owner-only backup claim for existing empty and new accounts, idempotency and isolation.');
+
+const existingStudent = {id:'backup-student',name:'Existing edit'};
+const extraStudent = {id:'another-student',name:'Existing entry'};
+const existing = {students:[existingStudent,extraStudent],classes:[],notes:[]};
+sqlite.prepare("DELETE FROM audit WHERE id='owner-backup-2026-11-19'").run();
+sqlite.prepare("UPDATE workspaces SET data=?,revision=3,file_bytes=10 WHERE owner_id='owner'").run(JSON.stringify(existing));
+const restoredSession = await (await call('/api/session',admin)).json();
+assert.equal(restoredSession.backup,'imported');
+const restored = await (await call('/api/workspace',admin)).json();
+assert.deepEqual(restored.data.students,existing.students);
+assert.deepEqual(restored.data.scores,backup.scores);
+assert.equal(restored.revision,4);
+assert.equal(sqlite.prepare("SELECT file_bytes FROM workspaces WHERE owner_id='owner'").get().file_bytes,10);
+assert.deepEqual(await (await call('/api/owner-backup',admin)).json(),backup);
+assert.equal((await call('/api/owner-backup')).status,404);
+assert.equal((await worker.fetch(new Request('https://cloud.test/api/owner-backup'),env)).status,401);
+sqlite.prepare("DELETE FROM audit WHERE id='owner-backup-2026-11-19'").run();
+env.OWNER_BACKUP_0 = '{';
+const pending = await (await call('/api/session',admin)).json();
+assert.equal(pending.backup,'pending');
+assert.equal(pending.account.status,'active');
+assert.equal((await call('/api/workspace',admin)).status,200);
+
+assert.equal((await worker.fetch(new Request('https://cloud.test/signup'),env)).status,200);
+const newcomer = {id:'newcomer'};
+assert.equal((await (await call('/api/session',newcomer)).json()).account,null);
+assert.equal((await call('/api/register',{...newcomer,method:'POST',data:{name:'New teacher',title:'New classroom',adminAccessAcknowledged:true}})).status,201);
+assert.deepEqual((await (await call('/api/workspace',newcomer)).json()).data,{students:[],classes:[],notes:[]});
+console.log('PASS populated owner workspace recovery, backup download isolation, login during recovery errors, and new member signup.');
