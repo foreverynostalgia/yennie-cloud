@@ -75,7 +75,7 @@ async function claimOwnerBackup(env, user) {
   }
   return true;
 }
-export async function handle(r,env){const url=new URL(r.url),p=url.pathname;
+export async function handle(r,env){const url=new URL(r.url),p=url.pathname;if(p==='/api/export')return handleExport(r,{db:env.DB,bucket:env.BUCKET,token:env.EXPORT_TOKEN});
  if(p==='/icon.png')return new Response(Uint8Array.from(atob(ICON),c=>c.charCodeAt(0)),{headers:{'Content-Type':'image/png'}});
  if(p==='/style.css')return new Response(CSS,{headers:{'Content-Type':'text/css; charset=utf-8'}});
  if(p==='/client.js')return new Response(CLIENT,{headers:{'Content-Type':'text/javascript; charset=utf-8'}});

@@ -8,7 +8,7 @@ constants.MANAGER = Object.fromEntries(await Promise.all(managerFiles.map(async 
 const studentFiles = Object.fromEntries(await Promise.all(['index.html','client.js'].map(async name=>[name,await readFile('src/student/'+name,'utf8')])));
 constants.STUDENT = studentFiles;
 const portalSource = await readFile('src/student-portal.js','utf8');
-const grading = (await Promise.all(['exam-layout','learning-grading'].map(async name=>
+const grading = (await Promise.all(['exam-layout','learning-grading','export-core'].map(async name=>
   stripTypeScriptTypes((await readFile('src/'+name+'.ts','utf8')).replace(/^export /gm,''))
 ))).join('\n');
 await mkdir('dist/server',{recursive:true});await writeFile('dist/server/index.js',Object.entries(constants).map(([k,v])=>'const '+k+'='+JSON.stringify(v)+';').join('\n')+'\n'+grading+'\n'+portalSource+'\n'+await readFile('src/server.js','utf8'));
