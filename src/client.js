@@ -1,20 +1,22 @@
 'use strict';
 const $=s=>document.querySelector(s),esc=x=>String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const signupPath = location.pathname === '/signup';
-const signIn = path => '/signin-with-chatgpt?return_to=' + encodeURIComponent(path);
+const signIn = path => '/auth/google?return_to=' + encodeURIComponent(path);
+const loginError = new URLSearchParams(location.search).get('login_error');
 let session=null,space=null,tab='overview',selected='',files=[],accounts=[],busy=false;
 const target=()=>selected?'?workspace='+encodeURIComponent(selected):'';
 const notice=m=>{$('#notice').textContent=m;clearTimeout(notice.timer);notice.timer=setTimeout(()=>$('#notice').textContent='',4500)};
 async function api(path,options={}){const r=await fetch('/api/'+path,{credentials:'same-origin',...options,headers:{'Content-Type':'application/json',...options.headers}});const type=r.headers.get('Content-Type')||'';if(!type.includes('application/json'))throw Error('로그인 상태나 연결을 확인해 주세요.');const d=await r.json();if(!r.ok)throw Error(d.error||'요청을 완료하지 못했습니다.');return d}
 const button=(action,text,light=true)=>'<button class="'+(light?'light':'')+'" data-action="'+action+'">'+text+'</button>';
-function shell(){const u=session;$('#identity').innerHTML=u?'<span>'+esc(u.email)+'</span>'+(u.admin?'<b class="badge">전체 관리자</b>':'')+'<a href="/signout-with-chatgpt?return_to=%2F" target="_top">로그아웃</a>':''}
+function shell(){const u=session;$('#identity').innerHTML=u?'<span>'+esc(u.email)+'</span>'+(u.admin?'<b class="badge">전체 관리자</b>':'')+'<a href="/auth/signout?return_to=%2F" target="_top">로그아웃</a>':''}
 function landing(){
   const login = '<a class="button light" href="'+signIn('/')+'" target="_top">기존 회원 로그인</a>';
   const actions = signupPath
-    ? '<a class="button" href="'+signIn('/signup')+'" target="_top">ChatGPT 계정으로 간편 가입</a>'+login
+    ? '<a class="button" href="'+signIn('/signup')+'" target="_top">Google 계정으로 간편 가입</a>'+login
     : '<a class="button" href="/signup">간편 회원가입</a>'+login;
   $('#app').innerHTML = '<section class="hero"><h1>'+(signupPath?'예니센스 간편 가입':'예니센스 클라우드')+'</h1>'
-    + '<p>'+(signupPath?'ChatGPT 인증 후 이름과 교실 이름을 입력하면 내 작업 공간이 만들어집니다.':'학생과 수업을 관리하고, 어느 기기에서든 내 작업 공간을 이어서 사용하세요.')+'</p>'
+    + '<p>'+(signupPath?'Google 로그인 후 이름과 교실 이름을 입력하면 내 작업 공간이 만들어집니다.':'학생과 수업을 관리하고, 어느 기기에서든 내 작업 공간을 이어서 사용하세요.')+'</p>'
+    + (loginError?'<p class="error" role="alert">'+esc(loginError)+'</p>':'')
     + '<div class="toolbar">'+actions+'</div></section>';
 }
 function signup(){$('#app').innerHTML='<section class="hero"><div class="eyebrow">WELCOME TO YENNIE SENSE</div><h1>나만의 공간 만들기</h1><p>'+esc(session.email)+' 계정으로 인증되었습니다.</p><form id="signup" class="form"><label>선생님 이름<input name="name" maxlength="60" autocomplete="name" required></label><label>클라우드 공간 이름<input name="title" placeholder="예: 예니 과학 교실" maxlength="80" required></label><label class="check"><input name="ack" type="checkbox" required><span>계정별 데이터는 다른 회원에게 공개되지 않으며, 전체 관리자는 운영·지원 목적으로 내 공간과 파일에 접근할 수 있다는 안내를 확인했습니다.</span></label><button type="submit">회원가입 및 공간 생성</button><p class="error" id="signup-error" role="alert"></p></form></section>';$('#signup').onsubmit=async e=>{e.preventDefault();const b=e.target.querySelector('button');b.disabled=true;try{const f=new FormData(e.target);await api('register',{method:'POST',body:JSON.stringify({name:f.get('name'),title:f.get('title'),adminAccessAcknowledged:f.get('ack')==='on'})});await start()}catch(err){$('#signup-error').textContent=err.message}finally{b.disabled=false}}}
