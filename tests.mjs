@@ -74,3 +74,18 @@ assert.equal((await (await call('/api/session',newcomer)).json()).account,null);
 assert.equal((await call('/api/register',{...newcomer,method:'POST',data:{name:'New teacher',title:'New classroom',adminAccessAcknowledged:true}})).status,201);
 assert.deepEqual((await (await call('/api/workspace',newcomer)).json()).data,{students:[],classes:[],notes:[]});
 console.log('PASS populated owner workspace recovery, backup download isolation, login during recovery errors, and new member signup.');
+
+const manager = await call('/manager');
+assert.equal(manager.status,200);
+assert.match(await manager.text(), /<nav id="nav"><\/nav>.*\/manager\/bootstrap\.js/s);
+assert.match(manager.headers.get('Content-Security-Policy'), /script-src 'self'; style-src 'unsafe-inline'/);
+assert.equal((await worker.fetch(new Request('https://cloud.test/manager'),env)).status,302);
+assert.equal((await call('/manager',{id:'bob'})).status,302);
+const managerCode = await (await call('/manager/app.js')).text();
+assert.ok(managerCode.includes('cloudManagerStorage'));
+assert.ok(!managerCode.includes('localStorage'));
+const adapter = await (await call('/manager/bootstrap.js')).text();
+assert.ok(adapter.includes("fetch('/api/workspace'"));
+assert.equal((await call('/manager/index.html')).status,404);
+assert.equal((await call('/manager/yennie-app-512.png')).headers.get('Content-Type'),'image/png');
+console.log('PASS original manager shell, cloud adapter and authenticated manager routing.');

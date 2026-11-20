@@ -79,8 +79,25 @@ export async function handle(r,env){const url=new URL(r.url),p=url.pathname;
  if(p==='/icon.png')return new Response(Uint8Array.from(atob(ICON),c=>c.charCodeAt(0)),{headers:{'Content-Type':'image/png'}});
  if(p==='/style.css')return new Response(CSS,{headers:{'Content-Type':'text/css; charset=utf-8'}});
  if(p==='/client.js')return new Response(CLIENT,{headers:{'Content-Type':'text/javascript; charset=utf-8'}});
- if(p==='/manifest.webmanifest')return json({name:'YENNIE SENSE Cloud',short_name:'YENNIE SENSE',start_url:'/',display:'standalone',icons:[{src:'/icon.png',sizes:'192x192',type:'image/png'}],theme_color:'#eaf4fc',background_color:'#eaf4fc'});
- if(p==='/'||p==='/signup')return new Response(HTML,{headers:{'Content-Type':'text/html; charset=utf-8'}});
+ if(p==='/manifest.webmanifest')return json({name:'YENNIE SENSE Cloud',short_name:'YENNIE SENSE',start_url:'/',display:'standalone',icons:[{src:'/manager/yennie-app-192.png',sizes:'192x192',type:'image/png'},{src:'/manager/yennie-app-512.png',sizes:'512x512',type:'image/png'}],theme_color:'#eaf4fc',background_color:'#eaf4fc'});
+ if(p==='/'||p==='/signup'||p==='/cloud')return new Response(HTML,{headers:{'Content-Type':'text/html; charset=utf-8'}});
+ if(p==='/manager'||p.startsWith('/manager/')){
+  const name = p==='/manager' ? 'index.html' : p.slice('/manager/'.length);
+  if(!Object.hasOwn(MANAGER,name))return json({error:'Not Found'},404);
+  const png = name.endsWith('.png');
+  if(p==='/manager'){
+   try {
+    await account(env,await identity(r,env));
+   } catch (error) {
+    if([401,403].includes(error.status))return Response.redirect(new URL('/',url),302);
+    throw error;
+   }
+  }
+  if(name==='index.html'&&p!=='/manager')return json({error:'Not Found'},404);
+  return new Response(png?Uint8Array.from(atob(MANAGER[name]),c=>c.charCodeAt(0)):MANAGER[name],{headers:{
+   'Content-Type':png?'image/png':name.endsWith('.js')?'text/javascript; charset=utf-8':'text/html; charset=utf-8',
+  }});
+ }
  if(!p.startsWith('/api/'))return json({error:'Not Found'},404);
  if(!['GET','POST','PUT'].includes(r.method))return json({error:'Method Not Allowed'},405);
  if(foreign(r))return json({error:'다른 사이트의 요청은 허용하지 않습니다.'},403);
@@ -130,4 +147,6 @@ export async function handle(r,env){const url=new URL(r.url),p=url.pathname;
  if(p==='/api/audit'&&r.method==='GET'){const a=await env.DB.prepare('SELECT actor_id,action,created_at FROM audit WHERE workspace_id=? ORDER BY created_at DESC LIMIT 100').bind(w.id).all();return json({events:a.results})}
  return json({error:'Not Found'},404);
 }
-export default {async fetch(r,env){let res;try{if(!['GET','HEAD'].includes(r.method)&&!new URL(r.url).pathname.startsWith('/api/'))res=json({error:'Method Not Allowed'},405);else res=await handle(r,env)}catch(e){res=json({error:e.status?e.message:'요청을 처리하지 못했습니다. 잠시 후 다시 시도해 주세요.'},e.status||500)}const h=new Headers(res.headers);for(const [k,v] of Object.entries({'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY','Referrer-Policy':'no-referrer','Strict-Transport-Security':'max-age=31536000','Cross-Origin-Resource-Policy':'same-origin','Permissions-Policy':'camera=(), microphone=(), geolocation=()','Content-Security-Policy':"default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; manifest-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'"}))h.set(k,v);return new Response(r.method==='HEAD'?null:res.body,{status:res.status,headers:h})}};
+export default {async fetch(r,env){let res;try{if(!['GET','HEAD'].includes(r.method)&&!new URL(r.url).pathname.startsWith('/api/'))res=json({error:'Method Not Allowed'},405);else res=await handle(r,env)}catch(e){res=json({error:e.status?e.message:'요청을 처리하지 못했습니다. 잠시 후 다시 시도해 주세요.'},e.status||500)}const h=new Headers(res.headers);for(const [k,v] of Object.entries({'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY','Referrer-Policy':'no-referrer','Strict-Transport-Security':'max-age=31536000','Cross-Origin-Resource-Policy':'same-origin','Permissions-Policy':'camera=(), microphone=(), geolocation=()','Content-Security-Policy':"default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; manifest-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'"}))h.set(k,v);if(new URL(r.url).pathname==='/manager') {
+ h.set('Content-Security-Policy', "default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; manifest-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'; object-src 'none'");
+}return new Response(r.method==='HEAD'?null:res.body,{status:res.status,headers:h})}};
