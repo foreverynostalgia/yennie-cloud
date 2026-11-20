@@ -102,7 +102,7 @@ async function cloudManagerStart() {
     if (!response.ok) throw new Error();
     cloudManagerWorkspace = await response.json();
     cloudManagerData = cloudManagerWorkspace.data;
-    for (const name of ['homework.js','app.js','qrcode.js','integration.js','weekly.js','videos.js','ocr.js']) {
+    for (const name of ['homework.js','app.js','qrcode.js','integration.js','portal-booking.js','weekly.js','videos.js','ocr.js']) {
       await cloudManagerScript(name);
     }
     if (invalidStoredData) {
@@ -113,6 +113,7 @@ async function cloudManagerStart() {
     status.setAttribute('role','status');
     app.before(status);
     initReport();
+    await syncRemote();
   } catch (error) {
     const message = document.createElement('p');
     message.textContent = error.message || '관리자 화면을 불러오지 못했습니다. 새로고침해 주세요.';

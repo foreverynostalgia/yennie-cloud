@@ -98,6 +98,15 @@ export async function handle(r,env){const url=new URL(r.url),p=url.pathname;
    'Content-Type':png?'image/png':name.endsWith('.js')?'text/javascript; charset=utf-8':'text/html; charset=utf-8',
   }});
  }
+ const studentPage = /^\/student\/[a-f0-9-]{36}$/.test(p);
+ if(studentPage || p==='/student/client.js'){
+  return new Response(STUDENT[studentPage?'index.html':'client.js'],{headers:{'Content-Type':studentPage?'text/html; charset=utf-8':'text/javascript; charset=utf-8'}});
+ }
+ const studentApi = /^\/api\/portal\/([a-f0-9-]{36})\/([a-z]+)$/.exec(p);
+ if(studentApi && ['GET','POST'].includes(r.method)){
+  if(!env.DB)return json({error:'학생 포털 저장소가 준비되지 않았습니다.'},503);
+  return portalPublic(r,env,url,studentApi);
+ }
  if(!p.startsWith('/api/'))return json({error:'Not Found'},404);
  if(!['GET','POST','PUT'].includes(r.method))return json({error:'Method Not Allowed'},405);
  if(foreign(r))return json({error:'다른 사이트의 요청은 허용하지 않습니다.'},403);
@@ -132,6 +141,10 @@ export async function handle(r,env){const url=new URL(r.url),p=url.pathname;
  if(p==='/api/admin/accounts'&&r.method==='GET'){await account(env,u);if(!u.admin)return json({error:'전체 관리자 권한이 필요합니다.'},403);const rows=await env.DB.prepare('SELECT a.user_id,a.email,a.name,a.status,a.created_at,a.workspace_id,w.title,w.revision,w.file_bytes FROM accounts a JOIN workspaces w ON w.id=a.workspace_id ORDER BY a.created_at DESC LIMIT 1000').all();await log(env,u,null,'admin.accounts.list');return json({accounts:rows.results})}
  if(p==='/api/admin/status'&&r.method==='POST'){await account(env,u);if(!u.admin)return json({error:'전체 관리자 권한이 필요합니다.'},403);const x=await readJson(r,4096);if(!x||typeof x.userId!=='string'||!['active','suspended'].includes(x.status))return json({error:'계정을 선택하세요.'},400);const target=await env.DB.prepare('SELECT * FROM accounts WHERE user_id=?').bind(x.userId).first();if(!target)return json({error:'계정을 찾을 수 없습니다.'},404);if(target.email.toLowerCase()===env.SUPERADMIN_EMAIL.toLowerCase())return json({error:'전체 관리자 계정은 정지할 수 없습니다.'},400);await env.DB.batch([env.DB.prepare('UPDATE accounts SET status=? WHERE user_id=?').bind(x.status,x.userId),env.DB.prepare('INSERT INTO audit(id,actor_id,workspace_id,action) VALUES(?,?,?,?)').bind(uid(),u.id,target.workspace_id,'account.'+x.status)]);return json({ok:true})}
  const {w}=await workspace(env,u,url);
+ if(p.startsWith('/api/booking/')) {
+  if(w.owner_id!==u.id)return json({error:'본인 작업 공간에서만 학생 포털을 운영할 수 있습니다.'},403);
+  return portalAdmin(r,env,url,w);
+ }
  if(p==='/api/workspace'&&r.method==='GET'){if(w.owner_id!==u.id)await log(env,u,w.id,'admin.workspace.read');return json({id:w.id,title:w.title,data:JSON.parse(w.data),revision:w.revision})}
  if(p==='/api/workspace'&&r.method==='PUT'){const x=await readJson(r);if(!x||!Number.isSafeInteger(x.revision)||x.revision<0)return json({error:'저장 버전을 확인하세요.'},400);const data=JSON.stringify(checkData(x.data));const res=await env.DB.batch([env.DB.prepare('UPDATE workspaces SET data=?,revision=revision+1 WHERE id=? AND revision=?').bind(data,w.id,x.revision),env.DB.prepare('INSERT INTO audit(id,actor_id,workspace_id,action) SELECT ?,?,?,? WHERE changes()>0').bind(uid(),u.id,w.id,u.admin&&w.owner_id!==u.id?'admin.workspace.update':'workspace.update')]);if(!res[0].meta.changes)return json({error:'다른 탭이나 기기에서 먼저 변경했습니다. 새로 불러온 뒤 다시 수정해 주세요.'},409);return json({revision:x.revision+1})}
  if(p==='/api/files'&&r.method==='GET'){const rows=await env.DB.prepare('SELECT id,name,mime,size,created_at FROM files WHERE workspace_id=? ORDER BY created_at DESC LIMIT 1000').bind(w.id).all();if(w.owner_id!==u.id)await log(env,u,w.id,'admin.files.list');return json({files:rows.results})}
@@ -147,6 +160,8 @@ export async function handle(r,env){const url=new URL(r.url),p=url.pathname;
  if(p==='/api/audit'&&r.method==='GET'){const a=await env.DB.prepare('SELECT actor_id,action,created_at FROM audit WHERE workspace_id=? ORDER BY created_at DESC LIMIT 100').bind(w.id).all();return json({events:a.results})}
  return json({error:'Not Found'},404);
 }
-export default {async fetch(r,env){let res;try{if(!['GET','HEAD'].includes(r.method)&&!new URL(r.url).pathname.startsWith('/api/'))res=json({error:'Method Not Allowed'},405);else res=await handle(r,env)}catch(e){res=json({error:e.status?e.message:'요청을 처리하지 못했습니다. 잠시 후 다시 시도해 주세요.'},e.status||500)}const h=new Headers(res.headers);for(const [k,v] of Object.entries({'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY','Referrer-Policy':'no-referrer','Strict-Transport-Security':'max-age=31536000','Cross-Origin-Resource-Policy':'same-origin','Permissions-Policy':'camera=(), microphone=(), geolocation=()','Content-Security-Policy':"default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; manifest-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'"}))h.set(k,v);if(new URL(r.url).pathname==='/manager') {
+export default {async fetch(r,env){let res;try{if(!['GET','HEAD'].includes(r.method)&&!new URL(r.url).pathname.startsWith('/api/'))res=json({error:'Method Not Allowed'},405);else res=await handle(r,env)}catch(e){res=json({error:e.status?e.message:'요청을 처리하지 못했습니다. 잠시 후 다시 시도해 주세요.'},e.status||500)}const h=new Headers(res.headers);for(const [k,v] of Object.entries({'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY','Referrer-Policy':'no-referrer','Strict-Transport-Security':'max-age=31536000','Cross-Origin-Resource-Policy':'same-origin','Permissions-Policy':'camera=(), microphone=(), geolocation=()','Content-Security-Policy':"default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; manifest-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'"}))h.set(k,v);if(/^\/student\/[a-f0-9-]{36}$/.test(new URL(r.url).pathname)){
+ h.set('Content-Security-Policy',"default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; frame-src https://www.youtube-nocookie.com; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'");
+}if(new URL(r.url).pathname==='/manager') {
  h.set('Content-Security-Policy', "default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; manifest-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'; object-src 'none'");
 }return new Response(r.method==='HEAD'?null:res.body,{status:res.status,headers:h})}};
