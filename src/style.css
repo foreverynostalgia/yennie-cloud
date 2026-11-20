@@ -11,3 +11,11 @@
 .student-video summary { cursor:pointer; font-weight:600; }
 .student-player iframe { width:100%; aspect-ratio:16/9; border:0; }
 @media(max-width:420px){.student-booking-grid .panel{padding:12px}.student-booking-grid h2{font-size:17px}}
+
+.site-footer { text-align:center; padding:28px 16px; font-size:13px; }
+.site-footer a { color:inherit; opacity:.75; }
+.policy { max-width:760px; margin:0 auto; padding:24px 16px 48px; line-height:1.7; }
+.policy h1 { margin-top:8px; }
+.policy h2 { font-size:18px; margin-top:28px; }
+.policy ul { padding-left:20px; }
+.policy .muted { opacity:.7; margin-top:32px; }

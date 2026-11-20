@@ -117,3 +117,16 @@ assert.match(cookiesOf(out).ys_teacher, /Max-Age=0/);
 // Student portal does not need a teacher session.
 assert.notEqual((await req('/student/' + '0'.repeat(8) + '-0000-0000-0000-' + '0'.repeat(12))).status, 401);
 console.log('PASS google sign-in: fail-closed config, PKCE/state/nonce, aud/iss/exp/email_verified checks, no open redirect, cookie integrity, legacy ChatGPT account relink (once, email-verified), old paths, sign-out.');
+// Public privacy policy page (required for the Google consent screen).
+env.SUPERADMIN_EMAIL = 'owner@test.local';
+const privacy = await req('/privacy');
+assert.equal(privacy.status, 200);
+const privacyHtml = await privacy.text();
+assert.match(privacyHtml, /개인정보처리방침/);
+assert.match(privacyHtml, /mailto:owner@test\.local/);
+assert.ok(!privacyHtml.includes('__CONTACT__'));
+env.PRIVACY_CONTACT_EMAIL = '"><script>x</script>@x';
+assert.ok(!(await (await req('/privacy')).text()).includes('<script>x'));
+delete env.PRIVACY_CONTACT_EMAIL;
+assert.match(await (await req('/')).text(), /href="\/privacy"/);
+console.log('PASS privacy page: public, contact from config, escaped, linked from home.');

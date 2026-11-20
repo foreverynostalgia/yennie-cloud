@@ -84,6 +84,7 @@ export async function handle(r,env){const url=new URL(r.url),p=url.pathname;cons
  if(p==='/style.css')return new Response(CSS,{headers:{'Content-Type':'text/css; charset=utf-8'}});
  if(p==='/client.js')return new Response(CLIENT,{headers:{'Content-Type':'text/javascript; charset=utf-8'}});
  if(p==='/manifest.webmanifest')return json({name:'YENNIE SENSE Cloud',short_name:'YENNIE SENSE',start_url:'/',display:'standalone',icons:[{src:'/manager/yennie-app-192.png',sizes:'192x192',type:'image/png'},{src:'/manager/yennie-app-512.png',sizes:'512x512',type:'image/png'}],theme_color:'#eaf4fc',background_color:'#eaf4fc'});
+ if(p==='/privacy'){const c=String(env.PRIVACY_CONTACT_EMAIL||env.SUPERADMIN_EMAIL||'').trim();const safe=/^[^\s@<>"'&]+@[^\s@<>"'&]+$/.test(c)?c:'';return new Response(PRIVACY.replaceAll('__CONTACT__',safe||'서비스 운영자에게 문의'),{headers:{'Content-Type':'text/html; charset=utf-8','Cache-Control':'public, max-age=300'}})}
  if(p==='/'||p==='/signup'||p==='/cloud')return new Response(HTML,{headers:{'Content-Type':'text/html; charset=utf-8'}});
  if(p==='/manager'||p.startsWith('/manager/')){
   const name = p==='/manager' ? 'index.html' : p.slice('/manager/'.length);
