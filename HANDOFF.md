@@ -36,7 +36,7 @@
 ## 3. 인증
 
 - **관리자**: Cloudflare Access(Zero Trust 팀 `winnerslabedu`, 앱 "YENNIE SENSE 관리자", 로그인 방식 One-time PIN, 허용 이메일 `foreverynostalgia@gmail.com`). Worker도 Access JWT를 직접 검증하며 설정이 없으면 503으로 막는다. 팀 이름을 바꾸면 `ACCESS_TEAM_DOMAIN`도 바꿔야 한다. 허용 이메일 추가는 Access 정책과 `ACCESS_ALLOWED_EMAILS` 둘 다 고친다.
-- **학생 예약 관리자 화면**: 직접 로그인 화면 없음. 관리자 사이트가 `MANAGER_SERVICE_KEY`로 세션을 받아 예약 관리 화면을 띄운다.
+- **학생 예약 관리자 화면**: 예니센스 관리자의 하위 메뉴(예약 시스템)로만 쓴다. 관리자 사이트가 `MANAGER_SERVICE_KEY`로 세션을 받아 띄우므로 별도 로그인이 없다. 데이터 로드가 실패해도 로그인 대신 자동 재시도·‘다시 연결’을 보여 준다. 예약 사이트 `/admin`에 세션 없이 들어오면 `MANAGER_URL`(wrangler 설정의 일반 변수, 배포 때마다 설정 파일에서 다시 들어감)로 이동한다.
 - **학생**: 닉네임 + PIN(`YE####`). PIN 사본은 첫 로그인 때 새 키로 자동 재암호화된다.
 - **클라우드 교사**: Google 로그인(OIDC + PKCE). Google Cloud 프로젝트 "YENNIE SENSE", 리디렉션 URI `https://yennie-cloud.yenniesense.workers.dev/auth/google/callback`, 게시 상태 프로덕션(브랜드 인증 미진행, 기본 범위만 사용). Sites 시절 계정은 같은 이메일의 Google 계정으로 처음 로그인할 때 한 번 자동 연결된다(소유자 계정 `totoxoxo2@gmail.com`은 연결 완료). 개인정보처리방침 `/privacy`.
 
