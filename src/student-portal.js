@@ -266,7 +266,7 @@ async function portalAdmin(request,env,url,w){
   if(endpoint==='students'||endpoint==='student-pin')return json(await portalAdminStudent(ctx,endpoint==='student-pin'?{...x,action:'credentials'}:x));
   if(endpoint==='review-videos'&&x.action==='metadata'){
     const id=portalYoutube(x.url);
-    const response=await fetch('https://www.youtube.com/oembed?format=json&url='+encodeURIComponent('https://www.youtube.com/watch?v='+id),{redirect:'error',signal:AbortSignal.timeout(5000)});
+    const response=await fetch('https://www.youtube.com/oembed?format=json&url='+encodeURIComponent('https://www.youtube.com/watch?v='+id),{redirect:'manual',signal:AbortSignal.timeout(5000)});
     if(!response.ok)portalFail('영상 제목을 가져오지 못했습니다. 직접 입력해 주세요.');
     const meta=await response.json();
     return json({title:String(meta.title||'').slice(0,200),author:String(meta.author_name||'').slice(0,200),videoId:id});
