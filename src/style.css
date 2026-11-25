@@ -34,3 +34,5 @@ html{scrollbar-color:rgba(95,117,133,.42) transparent}
 }
 dialog[open]{max-height:calc(100dvh - 32px);overflow:auto;overscroll-behavior:contain}
 html:has(dialog[open]){overflow:hidden}
+/* 스크롤바 (강제): no other rule may bring back the track or arrow buttons */
+@supports selector(::-webkit-scrollbar){html,*:not(.hide-scrollbar){scrollbar-width:auto!important;scrollbar-color:auto!important}::-webkit-scrollbar-button{display:none!important;width:0!important;height:0!important}::-webkit-scrollbar-track{background:transparent!important;box-shadow:none!important}}
