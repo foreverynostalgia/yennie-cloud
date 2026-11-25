@@ -19,3 +19,18 @@
 .policy h2 { font-size:18px; margin-top:28px; }
 .policy ul { padding-left:20px; }
 .policy .muted { opacity:.7; margin-top:32px; }
+
+/* 스크롤바: no white track, only a thin gray thumb that stays inside rounded popups. */
+html{scrollbar-color:rgba(95,117,133,.42) transparent}
+*{scrollbar-width:thin}
+@supports selector(::-webkit-scrollbar){
+ html,*{scrollbar-color:auto;scrollbar-width:auto}
+ ::-webkit-scrollbar{width:10px;height:10px;background:transparent}
+ ::-webkit-scrollbar-track,::-webkit-scrollbar-corner{background:transparent}
+ ::-webkit-scrollbar-thumb{background-color:rgba(95,117,133,.36);border:3px solid transparent;background-clip:padding-box;border-radius:999px;min-height:40px}
+ ::-webkit-scrollbar-thumb:hover{background-color:rgba(95,117,133,.6)}
+ ::-webkit-scrollbar-button{display:none;width:0;height:0}
+ dialog::-webkit-scrollbar-track,[role=dialog]::-webkit-scrollbar-track{margin:24px 0}
+}
+dialog[open]{max-height:calc(100dvh - 32px);overflow:auto;overscroll-behavior:contain}
+html:has(dialog[open]){overflow:hidden}
