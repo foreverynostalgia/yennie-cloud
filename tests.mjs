@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
 import {readFile} from 'node:fs/promises';
 import worker from './dist/server/index.js';
-const sqlite=new DatabaseSync(':memory:');sqlite.exec(await readFile('drizzle/0000_cloud.sql','utf8'));sqlite.exec(await readFile('drizzle/0001_student_portal.sql','utf8'));sqlite.exec(await readFile('drizzle/0002_teacher_notices.sql','utf8'));
+const sqlite=new DatabaseSync(':memory:');sqlite.exec(await readFile('drizzle/0000_cloud.sql','utf8'));sqlite.exec(await readFile('drizzle/0001_student_portal.sql','utf8'));
 const objects=new Map(),env={SUPERADMIN_EMAIL:'owner@test.local',BUCKET:{async put(k,b){objects.set(k,b)},async get(k){return objects.has(k)?{body:objects.get(k)}:null},async delete(k){objects.delete(k)}},DB:{prepare(sql){return {bind(...args){this.args=args;return this},async first(){return sqlite.prepare(sql).get(...(this.args||[]))||null},async all(){return {results:sqlite.prepare(sql).all(...(this.args||[]))}},async run(){return {meta:{changes:Number(sqlite.prepare(sql).run(...(this.args||[])).changes)}}}}},async batch(stmts){sqlite.exec('BEGIN');try{const result=[];for(const q of stmts)result.push(await q.run());sqlite.exec('COMMIT');return result}catch(e){sqlite.exec('ROLLBACK');throw e}}}};
 env.TEACHER_SESSION_SECRET='test-only-teacher-session-secret-0123456789';
 const b64u=b=>Buffer.from(b).toString('base64url');
