@@ -16,12 +16,16 @@ async function workspace(env,u,url){const a=await account(env,u),wanted=url.sear
 // Notices from the admin site (yennie-manager) to every teacher. The admin site
 // calls these routes server-to-server with X-Notice-Key; teachers only read.
 async function sameKey(a,b){if(typeof a!=='string'||typeof b!=='string'||!a||!b)return false;const enc=new TextEncoder(),[x,y]=await Promise.all([a,b].map(v=>crypto.subtle.digest('SHA-256',enc.encode(v))));const u=new Uint8Array(x),w=new Uint8Array(y);let d=a.length===b.length?0:1;for(let i=0;i<u.length;i++)d|=u[i]^w[i];return d===0}
+// Same SQL as drizzle/0002_teacher_notices.sql, run once per isolate so the table
+// exists even where the migration could not be applied by hand. Idempotent.
+let noticeTableReady=null;
+function ensureNoticeTable(env){return noticeTableReady??=env.DB.batch([env.DB.prepare('CREATE TABLE IF NOT EXISTS teacher_notices (id TEXT PRIMARY KEY, title TEXT NOT NULL, body TEXT NOT NULL, pinned INTEGER NOT NULL DEFAULT 0, published INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)'),env.DB.prepare('CREATE INDEX IF NOT EXISTS teacher_notices_order ON teacher_notices(published,pinned,created_at)')]).catch(e=>{noticeTableReady=null;throw e})}
 const noticeRow=n=>({id:n.id,title:n.title,body:n.body,pinned:!!n.pinned,published:!!n.published,createdAt:n.created_at,updatedAt:n.updated_at});
 function noticeInput(x){if(!x||typeof x!=='object')throw {status:400,message:'공지 내용을 확인해 주세요.'};const title=typeof x.title==='string'?x.title.trim():'',body=typeof x.body==='string'?x.body.trim():'';if(!title||title.length>120)throw {status:400,message:'제목은 1~120자로 써 주세요.'};if(!body||body.length>5000)throw {status:400,message:'내용은 1~5000자로 써 주세요.'};return {title,body,pinned:x.pinned?1:0,published:x.published===false?0:1}}
 async function noticeAdmin(r,env,p){
  if(!env.DB)return json({error:'클라우드 저장소를 준비 중입니다.'},503);
  if(!env.CLOUD_NOTICE_KEY||!await sameKey(r.headers.get('x-notice-key'),env.CLOUD_NOTICE_KEY))return json({error:'공지 관리 권한이 없습니다.'},403);
- const actor={id:'admin-site'};
+ const actor={id:'admin-site'};await ensureNoticeTable(env);
  if(p==='/api/admin/teacher-notices'&&r.method==='GET'){const rows=await env.DB.prepare('SELECT * FROM teacher_notices ORDER BY pinned DESC,created_at DESC LIMIT 200').all();return json({notices:rows.results.map(noticeRow)})}
  if(p==='/api/admin/teacher-notices'&&r.method==='POST'){const x=await readJson(r,16384);
   if(x?.action==='create'){const n=noticeInput(x),id=uid(),now=new Date().toISOString();await env.DB.prepare('INSERT INTO teacher_notices(id,title,body,pinned,published,created_at,updated_at) VALUES(?,?,?,?,?,?,?)').bind(id,n.title,n.body,n.pinned,n.published,now,now).run();await log(env,actor,null,'notice.create:'+id);return json({notice:noticeRow(await env.DB.prepare('SELECT * FROM teacher_notices WHERE id=?').bind(id).first())},201)}
@@ -134,7 +138,7 @@ export async function handle(r,env){const url=new URL(r.url),p=url.pathname;cons
  if(p==='/api/admin/teacher-notices')return noticeAdmin(r,env,p);
  if(foreign(r))return json({error:'다른 사이트의 요청은 허용하지 않습니다.'},403);
  const u=await identity(r,env);
- if(p==='/api/teacher-notices'&&r.method==='GET'){if(!env.DB)return json({error:'클라우드 저장소를 준비 중입니다.'},503);await account(env,u);const rows=await env.DB.prepare('SELECT * FROM teacher_notices WHERE published=1 ORDER BY pinned DESC,created_at DESC LIMIT 100').all();return json({notices:rows.results.map(noticeRow).map(({published,...n})=>n)})}
+ if(p==='/api/teacher-notices'&&r.method==='GET'){if(!env.DB)return json({error:'클라우드 저장소를 준비 중입니다.'},503);await account(env,u);await ensureNoticeTable(env);const rows=await env.DB.prepare('SELECT * FROM teacher_notices WHERE published=1 ORDER BY pinned DESC,created_at DESC LIMIT 100').all();return json({notices:rows.results.map(noticeRow).map(({published,...n})=>n)})}
  if(!env.DB)return json({error:'클라우드 저장소를 준비 중입니다.'},503);
  if(p==='/api/session'&&r.method==='GET'){
   let backup = null;
