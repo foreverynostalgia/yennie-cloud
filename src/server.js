@@ -13,6 +13,23 @@ async function identity(r,env){const who=await teacherIdentity(r,env);if(!who)th
 async function relinkLegacyAccount(env,id,email){if(await env.DB.prepare('SELECT 1 FROM accounts WHERE user_id=?').bind(id).first())return;const legacy=await env.DB.prepare("SELECT user_id,workspace_id FROM accounts WHERE lower(email)=? AND user_id NOT LIKE 'google:%' ORDER BY created_at LIMIT 1").bind(email.toLowerCase()).first();if(!legacy)return;await env.DB.batch([env.DB.prepare('UPDATE accounts SET user_id=? WHERE user_id=?').bind(id,legacy.user_id),env.DB.prepare('UPDATE workspaces SET owner_id=? WHERE owner_id=?').bind(id,legacy.user_id),env.DB.prepare('INSERT INTO audit(id,actor_id,workspace_id,action) VALUES(?,?,?,?)').bind(uid(),id,legacy.workspace_id,'account.relink.google')])}
 async function account(env,u){const a=await env.DB.prepare('SELECT * FROM accounts WHERE user_id=?').bind(u.id).first();if(!a)throw {status:403,message:'먼저 회원 정보를 등록해 주세요.'};if(a.status!=='active')throw {status:403,message:'이용이 정지된 계정입니다.'};return a}
 async function workspace(env,u,url){const a=await account(env,u),wanted=url.searchParams.get('workspace');if(wanted&&!u.admin&&wanted!==a.workspace_id)throw {status:403,message:'다른 계정의 공간에 접근할 수 없습니다.'};const id=u.admin&&wanted?wanted:a.workspace_id;const w=await env.DB.prepare('SELECT * FROM workspaces WHERE id=?').bind(id).first();if(!w)throw {status:404,message:'공간을 찾을 수 없습니다.'};return {a,w}}
+// Notices from the admin site (yennie-manager) to every teacher. The admin site
+// calls these routes server-to-server with X-Notice-Key; teachers only read.
+async function sameKey(a,b){if(typeof a!=='string'||typeof b!=='string'||!a||!b)return false;const enc=new TextEncoder(),[x,y]=await Promise.all([a,b].map(v=>crypto.subtle.digest('SHA-256',enc.encode(v))));const u=new Uint8Array(x),w=new Uint8Array(y);let d=a.length===b.length?0:1;for(let i=0;i<u.length;i++)d|=u[i]^w[i];return d===0}
+const noticeRow=n=>({id:n.id,title:n.title,body:n.body,pinned:!!n.pinned,published:!!n.published,createdAt:n.created_at,updatedAt:n.updated_at});
+function noticeInput(x){if(!x||typeof x!=='object')throw {status:400,message:'공지 내용을 확인해 주세요.'};const title=typeof x.title==='string'?x.title.trim():'',body=typeof x.body==='string'?x.body.trim():'';if(!title||title.length>120)throw {status:400,message:'제목은 1~120자로 써 주세요.'};if(!body||body.length>5000)throw {status:400,message:'내용은 1~5000자로 써 주세요.'};return {title,body,pinned:x.pinned?1:0,published:x.published===false?0:1}}
+async function noticeAdmin(r,env,p){
+ if(!env.DB)return json({error:'클라우드 저장소를 준비 중입니다.'},503);
+ if(!env.CLOUD_NOTICE_KEY||!await sameKey(r.headers.get('x-notice-key'),env.CLOUD_NOTICE_KEY))return json({error:'공지 관리 권한이 없습니다.'},403);
+ const actor={id:'admin-site'};
+ if(p==='/api/admin/teacher-notices'&&r.method==='GET'){const rows=await env.DB.prepare('SELECT * FROM teacher_notices ORDER BY pinned DESC,created_at DESC LIMIT 200').all();return json({notices:rows.results.map(noticeRow)})}
+ if(p==='/api/admin/teacher-notices'&&r.method==='POST'){const x=await readJson(r,16384);
+  if(x?.action==='create'){const n=noticeInput(x),id=uid(),now=new Date().toISOString();await env.DB.prepare('INSERT INTO teacher_notices(id,title,body,pinned,published,created_at,updated_at) VALUES(?,?,?,?,?,?,?)').bind(id,n.title,n.body,n.pinned,n.published,now,now).run();await log(env,actor,null,'notice.create:'+id);return json({notice:noticeRow(await env.DB.prepare('SELECT * FROM teacher_notices WHERE id=?').bind(id).first())},201)}
+  if(typeof x?.id!=='string'||!x.id||x.id.length>64)return json({error:'공지를 찾을 수 없습니다.'},404);
+  if(x.action==='update'){const n=noticeInput(x),now=new Date().toISOString();const res=await env.DB.prepare('UPDATE teacher_notices SET title=?,body=?,pinned=?,published=?,updated_at=? WHERE id=?').bind(n.title,n.body,n.pinned,n.published,now,x.id).run();if(!res.meta.changes)return json({error:'공지를 찾을 수 없습니다.'},404);await log(env,actor,null,'notice.update:'+x.id);return json({notice:noticeRow(await env.DB.prepare('SELECT * FROM teacher_notices WHERE id=?').bind(x.id).first())})}
+  if(x.action==='delete'){const res=await env.DB.prepare('DELETE FROM teacher_notices WHERE id=?').bind(x.id).run();if(!res.meta.changes)return json({error:'공지를 찾을 수 없습니다.'},404);await log(env,actor,null,'notice.delete:'+x.id);return json({ok:true})}
+  return json({error:'알 수 없는 요청입니다.'},400)}
+ return json({error:'Method Not Allowed'},405)}
 const backupMarker = 'owner-backup-2026-11-19';
 
 function hasOwnerBackup(env, user) {
@@ -114,8 +131,10 @@ export async function handle(r,env){const url=new URL(r.url),p=url.pathname;cons
  }
  if(!p.startsWith('/api/'))return json({error:'Not Found'},404);
  if(!['GET','POST','PUT'].includes(r.method))return json({error:'Method Not Allowed'},405);
+ if(p==='/api/admin/teacher-notices')return noticeAdmin(r,env,p);
  if(foreign(r))return json({error:'다른 사이트의 요청은 허용하지 않습니다.'},403);
  const u=await identity(r,env);
+ if(p==='/api/teacher-notices'&&r.method==='GET'){if(!env.DB)return json({error:'클라우드 저장소를 준비 중입니다.'},503);await account(env,u);const rows=await env.DB.prepare('SELECT * FROM teacher_notices WHERE published=1 ORDER BY pinned DESC,created_at DESC LIMIT 100').all();return json({notices:rows.results.map(noticeRow).map(({published,...n})=>n)})}
  if(!env.DB)return json({error:'클라우드 저장소를 준비 중입니다.'},503);
  if(p==='/api/session'&&r.method==='GET'){
   let backup = null;
