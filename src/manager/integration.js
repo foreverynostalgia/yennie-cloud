@@ -1,8 +1,8 @@
 let remote={connected:false,loading:false,error:'',role:'',students:[],courses:[],bookings:[],exams:[],attempts:[],notices:[],contacts:[],deliveries:[],reportAlimtalkConfigured:false,links:[]},integrationTab='reservations',examQuestions=[],reportDraft=null;
 const remoteOrigin=location.origin;
 const sectionLabels={attendance:'출결',tasks:'과제',scores:'시험 성적',bookings:'예약 현황',notes:'상담',payments:'수납',notices:'수업 공지'};
-let portalWorkspaceId='';
-const studentPortalUrl = (tab='',assignment='') => location.origin+'/student/'+portalWorkspaceId
+let portalWorkspaceId='',portalBaseUrl='';
+const studentPortalUrl = (tab='',assignment='') => (portalBaseUrl||location.origin+'/student/'+portalWorkspaceId)
   +(assignment?'?assignment='+encodeURIComponent(assignment):tab?'?tab='+encodeURIComponent(tab):'');
 async function bookingApi(path,body,method){
   const result=await fetch('/api/booking/'+path,{method:method||(body?'POST':'GET'),
@@ -18,6 +18,7 @@ async function syncRemote(quiet=false){
   try{
     const [data,students,learning]=await Promise.all([bookingApi('data'),bookingApi('students'),bookingApi('learning')]);
     portalWorkspaceId=data.workspaceId;
+    portalBaseUrl=data.portalUrl||'';
     Object.assign(remote,data,learning,{students:students.students,connected:true,error:''});
     for(const local of db.students){
       const linked=remote.students.find(student=>student.id===local.id&&student.nickname&&student.portalLinked);
