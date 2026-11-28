@@ -17,6 +17,8 @@ const config = {
   d1_databases: [{binding: 'DB', database_name: 'yennie-cloud', database_id: 'eaf1baee-571c-42cf-bab4-2533fb5af6dc'}],
   r2_buckets: [{binding: 'BUCKET', bucket_name: 'yennie-cloud-files'}],
   observability: {enabled: true},
+  // 04:00 KST daily: delete accounts 30 days after leaving, drop old rollback blobs.
+  triggers: {crons: ['0 19 * * *']},
 };
 await writeFile(new URL('./dist/server/wrangler.json', import.meta.url), JSON.stringify(config, null, 2));
 console.log('wrangler.json ->', config.name);
