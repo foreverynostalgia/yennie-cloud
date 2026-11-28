@@ -47,3 +47,12 @@ a record changed elsewhere first is refused (409) and reported by key, other
 records still save. A per-doc revision guard makes each save atomic. The old
 blobs (`workspaces.data`, `student_portals.data`) are copied once on first read
 and left untouched as a rollback copy.
+
+Backups and errors (2026-11-28). A daily cron (04:00 KST) writes every table
+(except short-lived sessions and login counters) to R2 under
+`backups/<day>/` as gzip JSON lines with a manifest, kept 30 days. Uploaded
+files are already in R2 and are not copied. `/api/admin/ops` (admin site only,
+`X-Notice-Key`) shows the last backup and errors and can restore one teacher's
+records from a given day (audited). Server errors are counted per day, route
+shape and message, with ids removed; no request bodies are kept. D1 Time Travel
+remains the whole-database recovery path.
