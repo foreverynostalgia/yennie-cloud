@@ -124,10 +124,21 @@ export async function handle(r,env){const url=new URL(r.url),p=url.pathname;cons
    'Content-Type':png?'image/png':name.endsWith('.js')?'text/javascript; charset=utf-8':'text/html; charset=utf-8',
   }});
  }
- const studentPage = /^\/student\/[a-f0-9-]{36}$/.test(p);
- if(studentPage || p==='/student/client.js'){
-  return new Response(STUDENT[studentPage?'index.html':'client.js'],{headers:{'Content-Type':studentPage?'text/html; charset=utf-8':'text/javascript; charset=utf-8'}});
+ const studentPage = /^\/student\/([a-f0-9-]{36})$/.exec(p);
+ const studentHost = /^https:\/\/([a-z0-9.-]+)$/.exec(String(env.STUDENT_BASE||'').trim().replace(/\/+$/,''))?.[1];
+ const codePage = /^\/s\/([a-z0-9-]{3,30})$/.exec(p) || (studentHost && url.hostname===studentHost ? /^\/([a-z0-9-]{3,30})$/.exec(p) : null);
+ const studentHeaders = {'Content-Type':'text/html; charset=utf-8','X-Student-Page':'1'};
+ if(codePage){
+  if(!env.DB)return json({error:'학생 포털 저장소가 준비되지 않았습니다.'},503);
+  const cw=await workspaceForCode(env,codePage[1]);
+  if(!cw)return new Response('<!doctype html><meta charset="utf-8"><title>주소를 확인해 주세요</title><link rel="stylesheet" href="/style.css"><main class="panel"><h1>주소를 확인해 주세요</h1><p>선생님께 받은 학생 페이지 주소가 맞는지 확인해 주세요.</p></main>',{status:404,headers:studentHeaders});
+  return new Response(studentHtml(cw.id),{headers:studentHeaders});
  }
+ if(studentPage){
+  if(env.DB){const code=await currentCode(env,studentPage[1]);if(code)return Response.redirect(studentBase(env,url.origin)+'/'+code+url.search,302)}
+  return new Response(studentHtml(studentPage[1]),{headers:studentHeaders});
+ }
+ if(p==='/student/client.js')return new Response(STUDENT['client.js'],{headers:{'Content-Type':'text/javascript; charset=utf-8'}});
  const studentApi = /^\/api\/portal\/([a-f0-9-]{36})\/([a-z]+)$/.exec(p);
  if(studentApi && ['GET','POST'].includes(r.method)){
   if(!env.DB)return json({error:'학생 포털 저장소가 준비되지 않았습니다.'},503);
@@ -163,14 +174,18 @@ export async function handle(r,env){const url=new URL(r.url),p=url.pathname;cons
     'Content-Disposition':'attachment; filename="yensense-backup-2026-11-19.json"',
   }});
  }
+ if(p==='/api/teacher-code/check'&&r.method==='GET'){if(!env.DB)return json({error:'클라우드 저장소를 준비 중입니다.'},503);const code=String(url.searchParams.get('code')||'').trim().toLowerCase();return json({code,...await codeAvailable(env,code)})}
+ if(p==='/api/teacher-code/suggest'&&r.method==='GET'){if(!env.DB)return json({error:'클라우드 저장소를 준비 중입니다.'},503);let code=codeSuggestion(u.email);for(let i=2;!(await codeAvailable(env,code)).ok&&i<20;i++)code=codeSuggestion(u.email).slice(0,26)+'-'+i;return json({code})}
  if(p==='/api/register'&&r.method==='POST'){
- const x=await readJson(r,4096);if(!x||typeof x.name!=='string'||!x.name.trim()||x.name.length>60||typeof x.title!=='string'||!x.title.trim()||x.title.length>80||x.adminAccessAcknowledged!==true||Object.keys(x).some(k=>!['name','title','adminAccessAcknowledged'].includes(k)))return json({error:'이름·공간 이름과 관리자 접근 안내 확인이 필요합니다.'},400);
+ const x=await readJson(r,4096);if(!x||typeof x.name!=='string'||!x.name.trim()||x.name.length>60||typeof x.title!=='string'||!x.title.trim()||x.title.length>80||x.adminAccessAcknowledged!==true||x.code!==undefined&&typeof x.code!=='string'||Object.keys(x).some(k=>!['name','title','adminAccessAcknowledged','code'].includes(k)))return json({error:'이름·공간 이름과 관리자 접근 안내 확인이 필요합니다.'},400);
  const exists=await env.DB.prepare('SELECT user_id FROM accounts WHERE user_id=?').bind(u.id).first();if(exists)return json({error:'이미 등록된 계정입니다.'},409);
- const id=uid();await env.DB.batch([env.DB.prepare('INSERT INTO workspaces(id,owner_id,title,data) VALUES(?,?,?,?)').bind(id,u.id,x.title.trim(),JSON.stringify(emptyData())),env.DB.prepare('INSERT INTO accounts(user_id,email,name,workspace_id) VALUES(?,?,?,?)').bind(u.id,u.email,x.name.trim(),id),env.DB.prepare('INSERT INTO audit(id,actor_id,workspace_id,action) VALUES(?,?,?,?)').bind(uid(),u.id,id,'account.register')]);return json({ok:true},201);
+ const id=uid();const codeSql=x.code?await codeStatements(env,id,x.code.trim().toLowerCase()):[];try{await env.DB.batch([env.DB.prepare('INSERT INTO workspaces(id,owner_id,title,data) VALUES(?,?,?,?)').bind(id,u.id,x.title.trim(),JSON.stringify(emptyData())),env.DB.prepare('INSERT INTO accounts(user_id,email,name,workspace_id) VALUES(?,?,?,?)').bind(u.id,u.email,x.name.trim(),id),...codeSql,env.DB.prepare('INSERT INTO audit(id,actor_id,workspace_id,action) VALUES(?,?,?,?)').bind(uid(),u.id,id,'account.register')])}catch(e){if(codeSql.length&&/UNIQUE|PRIMARY/i.test(String(e?.message)))return json({error:'이미 쓰고 있는 코드예요. 다른 코드를 골라 주세요.'},400);throw e}return json({ok:true},201);
  }
  if(p==='/api/admin/accounts'&&r.method==='GET'){await account(env,u);if(!u.admin)return json({error:'전체 관리자 권한이 필요합니다.'},403);await ensureStoreTables(env);await ensureAccountTables(env);const rows=await env.DB.prepare("SELECT a.user_id,a.email,a.name,a.status,a.created_at,a.workspace_id,w.title,COALESCE(d.revision,w.revision) AS revision,w.file_bytes,d.records,d.bytes AS data_bytes,COALESCE(m.plan,'beta') AS plan,m.delete_after FROM accounts a JOIN workspaces w ON w.id=a.workspace_id LEFT JOIN docs d ON d.doc='w:'||w.id LEFT JOIN account_meta m ON m.user_id=a.user_id ORDER BY a.created_at DESC LIMIT 1000").all();await log(env,u,null,'admin.accounts.list');return json({accounts:rows.results})}
  if(p==='/api/admin/status'&&r.method==='POST'){await account(env,u);if(!u.admin)return json({error:'전체 관리자 권한이 필요합니다.'},403);const x=await readJson(r,4096);if(!x||typeof x.userId!=='string'||!['active','suspended'].includes(x.status))return json({error:'계정을 선택하세요.'},400);const target=await env.DB.prepare('SELECT * FROM accounts WHERE user_id=?').bind(x.userId).first();if(!target)return json({error:'계정을 찾을 수 없습니다.'},404);if(target.email.toLowerCase()===env.SUPERADMIN_EMAIL.toLowerCase())return json({error:'전체 관리자 계정은 정지할 수 없습니다.'},400);await ensureAccountTables(env);await env.DB.batch([env.DB.prepare('UPDATE accounts SET status=? WHERE user_id=?').bind(x.status,x.userId),...(x.status==='active'?[env.DB.prepare('UPDATE account_meta SET leave_requested_at=NULL,delete_after=NULL WHERE user_id=?').bind(x.userId)]:[]),env.DB.prepare('INSERT INTO audit(id,actor_id,workspace_id,action) VALUES(?,?,?,?)').bind(uid(),u.id,target.workspace_id,target.status==='leaving'&&x.status==='active'?'account.leave.cancel':'account.'+x.status)]);return json({ok:true})}
  const {a,w}=await workspace(env,u,url);
+ if(p==='/api/teacher-code'&&r.method==='GET')return json(await codeInfo(env,w.id,url.origin));
+ if(p==='/api/teacher-code'&&r.method==='POST'){if(w.owner_id!==u.id)return json({error:'본인 공간에서만 바꿀 수 있습니다.'},403);const x=await readJson(r,1024);return json(await setTeacherCode(env,u,w,String(x?.code||'').trim().toLowerCase()))}
  if(p==='/api/usage'&&r.method==='GET'){if(w.owner_id!==u.id)await log(env,u,w.id,'admin.usage.read');return json(await workspaceUsage(env,w,w.owner_id))}
  if(p==='/api/account/leave'&&r.method==='POST'){if(w.owner_id!==u.id)return json({error:'본인 계정만 탈퇴할 수 있습니다.'},403);return json(await requestLeave(env,u,a,await readJson(r,1024)))}
  if(p.startsWith('/api/booking/')) {
@@ -205,7 +220,7 @@ export async function handle(r,env){const url=new URL(r.url),p=url.pathname;cons
  if(p==='/api/audit'&&r.method==='GET'){const a=await env.DB.prepare('SELECT actor_id,action,created_at FROM audit WHERE workspace_id=? ORDER BY created_at DESC LIMIT 100').bind(w.id).all();return json({events:a.results})}
  return json({error:'Not Found'},404);
 }
-export default {async scheduled(event,env,ctx){ctx.waitUntil((async()=>{try{await dailyCleanup(env,event.scheduledTime)}catch(e){await recordError(env,new Request('https://cron/cleanup'),e)}try{await dailyBackup(env,event.scheduledTime)}catch(e){await recordError(env,new Request('https://cron/backup'),e)}})())},async fetch(r,env){let res;try{if(!['GET','HEAD'].includes(r.method)&&!new URL(r.url).pathname.startsWith('/api/'))res=json({error:'Method Not Allowed'},405);else res=await handle(r,env)}catch(e){if(!e?.status)await recordError(env,r,e);res=json({error:e.status?e.message:'요청을 처리하지 못했습니다. 잠시 후 다시 시도해 주세요.'},e.status||500)}const h=new Headers(res.headers);for(const [k,v] of Object.entries({'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY','Referrer-Policy':'no-referrer','Strict-Transport-Security':'max-age=31536000','Cross-Origin-Resource-Policy':'same-origin','Permissions-Policy':'camera=(), microphone=(), geolocation=()','Content-Security-Policy':"default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; manifest-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'"}))h.set(k,v);if(/^\/student\/[a-f0-9-]{36}$/.test(new URL(r.url).pathname)){
+export default {async scheduled(event,env,ctx){ctx.waitUntil((async()=>{try{await dailyCleanup(env,event.scheduledTime)}catch(e){await recordError(env,new Request('https://cron/cleanup'),e)}try{await dailyBackup(env,event.scheduledTime)}catch(e){await recordError(env,new Request('https://cron/backup'),e)}})())},async fetch(r,env){let res;try{if(!['GET','HEAD'].includes(r.method)&&!new URL(r.url).pathname.startsWith('/api/'))res=json({error:'Method Not Allowed'},405);else res=await handle(r,env)}catch(e){if(!e?.status)await recordError(env,r,e);res=json({error:e.status?e.message:'요청을 처리하지 못했습니다. 잠시 후 다시 시도해 주세요.'},e.status||500)}const h=new Headers(res.headers);for(const [k,v] of Object.entries({'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY','Referrer-Policy':'no-referrer','Strict-Transport-Security':'max-age=31536000','Cross-Origin-Resource-Policy':'same-origin','Permissions-Policy':'camera=(), microphone=(), geolocation=()','Content-Security-Policy':"default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; manifest-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'"}))h.set(k,v);if(h.get('X-Student-Page')){h.delete('X-Student-Page');
  h.set('Referrer-Policy','strict-origin-when-cross-origin');
  h.set('Content-Security-Policy',"default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; frame-src https://www.youtube-nocookie.com; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'");
 }if(new URL(r.url).pathname==='/manager') {

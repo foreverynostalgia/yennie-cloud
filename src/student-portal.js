@@ -235,7 +235,7 @@ async function portalAdmin(request,env,url,w){
   const endpoint=url.pathname.slice('/api/booking/'.length);
   if(request.method==='GET'){
     if(endpoint==='student-pin')return json((await portalAdminStudent(ctx,{action:'credentials',id:url.searchParams.get('id')})).credentials[0]);
-    if(endpoint==='data')return json({role:'owner',workspaceId:ctx.id,courses:portalCourses(ctx),bookings:d.bookings,slots:d.slots});
+    if(endpoint==='data')return json({role:'owner',workspaceId:ctx.id,portalUrl:(await codeInfo(env,ctx.id,url.origin)).url,courses:portalCourses(ctx),bookings:d.bookings,slots:d.slots});
     if(endpoint==='students')return json({students:portalStudents(ctx)});
     if(endpoint==='learning')return json({exams:d.exams,attempts:d.attempts,links:d.links,notices:d.notices,contacts:[],deliveries:[],reportAlimtalkConfigured:false});
     if(endpoint==='review-videos')return json({videos:d.videos,courses:d.courses,classAssignments:d.assignments});

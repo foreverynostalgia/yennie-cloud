@@ -1,7 +1,7 @@
 'use strict';
 
 const app=document.querySelector('#student-app');
-const prefix='/api/portal/'+location.pathname.split('/').pop()+'/';
+const prefix='/api/portal/'+(document.querySelector('meta[name="ys-workspace"]')?.content||location.pathname.split('/').pop())+'/';
 const params=new URLSearchParams(location.search);
 const assignment=params.get('assignment');
 let currentTab=['booking','learning','videos'].includes(params.get('tab'))?params.get('tab'):'booking';

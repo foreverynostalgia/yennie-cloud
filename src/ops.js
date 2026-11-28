@@ -8,7 +8,7 @@ const BACKUP_PAGE = 2000;
 const BACKUP_TABLES = [
   ['accounts', ['user_id']], ['account_meta', ['user_id']], ['workspaces', ['id']], ['files', ['id']],
   ['audit', ['id']], ['student_portals', ['workspace_id']], ['teacher_notices', ['id']],
-  ['docs', ['doc']], ['doc_records', ['doc', 'coll', 'rid']],
+  ['docs', ['doc']], ['doc_records', ['doc', 'coll', 'rid']], ['teacher_codes', ['code']],
 ];
 const OPS_SQL = [
   'CREATE TABLE IF NOT EXISTS ops_status (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL)',
@@ -31,7 +31,7 @@ async function gunzip(bytes) {
 
 async function dailyBackup(env, now = Date.now()) {
   if (!env.BUCKET) return null;
-  for (const ensure of [ensureOpsTables, ensureStoreTables, ensureAccountTables, ensureNoticeTable]) await ensure(env);
+  for (const ensure of [ensureOpsTables, ensureStoreTables, ensureAccountTables, ensureNoticeTable, ensureCodeTables]) await ensure(env);
   const day = kstDay(now), prefix = 'backups/' + day + '/', manifest = {day, startedAt: new Date(now).toISOString(), tables: {}};
   for (const [table, keys] of BACKUP_TABLES) {
     let after = null, part = 0, lines = [], size = 0, rows = 0;

@@ -7,7 +7,7 @@ constants.MANAGER = Object.fromEntries(await Promise.all(managerFiles.map(async 
 ])));
 const studentFiles = Object.fromEntries(await Promise.all(['index.html','client.js'].map(async name=>[name,await readFile('src/student/'+name,'utf8')])));
 constants.STUDENT = studentFiles;
-const portalSource = await readFile('src/store-codec.js','utf8') + '\n' + await readFile('src/store.js','utf8') + '\n' + await readFile('src/account.js','utf8') + '\n' + await readFile('src/ops.js','utf8') + '\n' + await readFile('src/student-portal.js','utf8');
+const portalSource = await readFile('src/store-codec.js','utf8') + '\n' + await readFile('src/store.js','utf8') + '\n' + await readFile('src/account.js','utf8') + '\n' + await readFile('src/ops.js','utf8') + '\n' + await readFile('src/teacher-code.js','utf8') + '\n' + await readFile('src/student-portal.js','utf8');
 const grading = (await Promise.all(['exam-layout','learning-grading'].map(async name=>
   stripTypeScriptTypes((await readFile('src/'+name+'.ts','utf8')).replace(/^export /gm,''))
 ))).join('\n');
