@@ -128,6 +128,20 @@ async function cloudManagerFlush() {
   }
 }
 
+// The shell shows this teacher's own space and name (never a fixed name).
+async function cloudManagerIdentity(title) {
+  const set = (id, text) => { const node = document.getElementById(id); if (node) node.textContent = text; };
+  set('ws-title-side', title || '');
+  set('ws-title-head', title ? ' / ' + title : '');
+  try {
+    const session = await (await fetch('/api/session')).json();
+    const name = String(session.account?.name || '').trim();
+    set('teacher-name', name ? name + ' 선생님' : '');
+    const chars = Array.from(name);
+    set('teacher-avatar', chars.length === 3 && /^[가-힣]+$/.test(name) ? chars[1] : (chars[0] || ''));
+  } catch {}
+}
+
 function cloudManagerScript(name) {
   return new Promise((resolve, reject) => {
     const script = document.createElement('script');
@@ -150,6 +164,7 @@ async function cloudManagerStart() {
     if (!response.ok) throw new Error();
     cloudManagerWorkspace = await response.json();
     cloudManagerData = cloudManagerWorkspace.data;
+    cloudManagerIdentity(cloudManagerWorkspace.title);
     cloudManagerSynced = storeEncode(cloudManagerData);
     cloudManagerVersions = new Map(Object.entries(cloudManagerWorkspace.versions || {}));
     for (const name of ['homework.js','app.js','qrcode.js','integration.js','portal-booking.js','weekly.js','videos.js','ocr.js']) {

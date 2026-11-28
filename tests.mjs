@@ -91,6 +91,7 @@ assert.ok(!managerCode.includes('localStorage'));
 const adapter = await (await call('/manager/bootstrap.js')).text();
 assert.ok(adapter.includes("fetch('/api/workspace?versions=1'"));assert.ok(adapter.includes("fetch('/api/workspace/changes'"));
 assert.equal((await call('/manager/index.html')).status,404);
+const shellHtml=await (await call('/manager')).text();for(const fixed of ['김예은','예은 선생님','YE SCI'])assert.ok(!shellHtml.includes(fixed),'no fixed teacher name in the shell: '+fixed);assert.match(shellHtml,/id="teacher-name"/);
 assert.equal((await call('/manager/yennie-app-512.png')).headers.get('Content-Type'),'image/png');
 console.log('PASS original manager shell, cloud adapter and authenticated manager routing.');
 
