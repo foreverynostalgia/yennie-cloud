@@ -80,7 +80,7 @@ async function purgeAccount(env, a) {
 
 // Daily (cron): delete accounts whose 30 days have passed; drop old rollback blobs.
 async function dailyCleanup(env, now = Date.now()) {
-  await Promise.all([ensureAccountTables(env), ensureStoreTables(env)]);
+  await ensureAccountTables(env); await ensureStoreTables(env);
   const due = (await env.DB.prepare("SELECT a.user_id,a.workspace_id FROM accounts a JOIN account_meta m ON m.user_id=a.user_id WHERE a.status='leaving' AND m.delete_after IS NOT NULL AND m.delete_after<=? LIMIT 50").bind(new Date(now).toISOString()).all()).results;
   for (const a of due) await purgeAccount(env, a);
   const cutoff = new Date(now - LEGACY_KEEP_DAYS * 86400000).toISOString();
