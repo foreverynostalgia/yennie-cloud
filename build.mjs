@@ -1,6 +1,11 @@
 import {stripTypeScriptTypes} from 'node:module';
 import {readFile,mkdir,writeFile} from 'node:fs/promises';
 const constants={HTML:await readFile('src/index.html','utf8'),PRIVACY:await readFile('src/privacy.html','utf8'),CSS:await readFile('src/style.css','utf8'),CLIENT:await readFile('src/client.js','utf8'),ICON:(await readFile('src/icon.png')).toString('base64')};
+// The landing page ("/") ships its markup in index.html; the signed-in app shell drops it.
+constants.APP_HTML=constants.HTML.replace(/<div class="lp">[\s\S]*<\/div><\/main>/,'<p>안전한 클라우드 공간을 불러오는 중입니다.</p></main>');
+if(constants.APP_HTML===constants.HTML)throw new Error('landing markup not found in index.html');
+const landingFiles=['Pretendard-Regular.subset.woff2','Pretendard-SemiBold.subset.woff2','Pretendard-Bold.subset.woff2','Pretendard-LICENSE.txt','app-dashboard.webp','app-dashboard-1280.webp','logo-96.png'];
+constants.LANDING=Object.fromEntries(await Promise.all(landingFiles.map(async n=>[n,(await readFile('src/landing/'+n)).toString('base64')])));
 const managerFiles = ['index.html', 'bootstrap.js', 'store-codec.js', 'portal-booking.js', 'app.js', 'homework.js', 'qrcode.js', 'integration.js', 'weekly.js', 'videos.js', 'ocr.js', 'yennie-icon.png', 'yennie-app-180.png', 'yennie-app-192.png', 'yennie-app-512.png'];
 constants.MANAGER = Object.fromEntries(await Promise.all(managerFiles.map(async name => [
   name, (await readFile(name === 'store-codec.js' ? 'src/store-codec.js' : 'src/manager/' + name)).toString(name.endsWith('.png') ? 'base64' : 'utf8'),

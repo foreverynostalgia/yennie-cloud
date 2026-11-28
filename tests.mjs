@@ -183,3 +183,25 @@ assert.ok(sqlite.prepare("SELECT count(*) n FROM audit WHERE action LIKE 'notice
 assert.equal((await worker.fetch(new Request('https://cloud.test/api/teacher-notices'),env)).status,401);
 delete env.CLOUD_NOTICE_KEY;assert.equal((await adminNotice('GET',undefined,'anything')).status,403,'no key configured means closed');
 console.log('PASS teacher notices: key-only admin writes, published-only teacher reads, pinned first, audit.');
+
+// Landing page ("/") and the app shell (/signup, /cloud).
+{
+  const home = await worker.fetch(new Request('https://cloud.test/'), env), html = await home.text();
+  assert.equal(home.status, 200);
+  assert.ok(html.includes('class="lp"') && html.includes('무료로 시작하기') && html.includes('id="pricing"'), 'landing markup served at /');
+  assert.ok(!/ style="/.test(html), 'no inline styles (CSP style-src self)');
+  assert.ok(home.headers.get('content-security-policy').includes("font-src 'self'"), 'self-hosted font allowed');
+  for (const path of ['/signup', '/cloud']) {
+    const shell = await (await worker.fetch(new Request('https://cloud.test' + path), env)).text();
+    assert.ok(!shell.includes('class="lp"') && shell.includes('id="app"') && shell.includes('/client.js'), path + ' serves the app shell without landing markup');
+  }
+  for (const [path, type] of [['/landing/Pretendard-Bold.subset.woff2', 'font/woff2'], ['/landing/app-dashboard-1280.webp', 'image/webp'], ['/landing/logo-96.png', 'image/png'], ['/landing/Pretendard-LICENSE.txt', 'text/plain; charset=utf-8']]) {
+    const res = await worker.fetch(new Request('https://cloud.test' + path), env);
+    assert.equal(res.status, 200, path);
+    assert.equal(res.headers.get('content-type'), type, path);
+    assert.ok((await res.arrayBuffer()).byteLength > 100, path);
+  }
+  assert.equal((await worker.fetch(new Request('https://cloud.test/landing/../server.js'), env)).status === 200, false);
+  assert.equal((await worker.fetch(new Request('https://cloud.test/landing/toString'), env)).status, 404);
+  console.log('PASS landing page: markup at /, app shell elsewhere, self-hosted font and images, CSP-clean.');
+}
