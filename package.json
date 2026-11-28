@@ -1,1 +1,1 @@
-{"name":"yennie-sense-cloud","private":true,"type":"module","scripts":{"build":"node build.mjs","test":"node tests.mjs && node test-auth.mjs"}}
+{"name":"yennie-sense-cloud","private":true,"type":"module","scripts":{"build":"node build.mjs","test":"node tests.mjs && node test-auth.mjs && node test-store.mjs"}}
