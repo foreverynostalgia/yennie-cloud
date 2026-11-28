@@ -61,17 +61,12 @@ function portalIds(input, allowed) {
   return [...new Set(input)];
 }
 async function portalContext(env,workspaceRow) {
-  const row=await env.DB.prepare('SELECT data,revision FROM student_portals WHERE workspace_id=?').bind(workspaceRow.id).first();
-  return {env,id:workspaceRow.id,records:JSON.parse(workspaceRow.data),revision:row?.revision??null,data:row?JSON.parse(row.data):portalEmpty()};
+  const [records,portal]=await Promise.all([loadWorkspaceData(env,workspaceRow),loadPortalData(env,workspaceRow.id)]);
+  return {env,id:workspaceRow.id,records:records.data,loaded:portal,data:portal.data};
 }
 async function portalWrite(ctx) {
-  const data=JSON.stringify(ctx.data);
-  if(new TextEncoder().encode(data).length>1024*1024) portalFail('학생 포털 저장 한도를 초과했습니다.',413);
-  const {DB}=ctx.env;
-  const result=ctx.revision===null
-    ? await DB.prepare('INSERT OR IGNORE INTO student_portals(workspace_id,data,revision) VALUES(?,?,0)').bind(ctx.id,data).run()
-    : await DB.prepare('UPDATE student_portals SET data=?,revision=revision+1 WHERE workspace_id=? AND revision=?').bind(data,ctx.id,ctx.revision).run();
-  if(!result.meta.changes) portalFail('다른 기기에서 먼저 변경했습니다. 다시 확인한 뒤 저장해 주세요.',409);
+  try { await storeSaveData(ctx.env,ctx.loaded,ctx.data); }
+  catch(error) { if(error?.status===409) portalFail('다른 기기에서 먼저 변경했습니다. 다시 확인한 뒤 저장해 주세요.',409); throw error; }
 }
 function portalExamLinks(ctx,exam,links) {
   if(!Array.isArray(links)||!links.length||links.length>100) portalFail('수업과 회차를 선택해 주세요.');

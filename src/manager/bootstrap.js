@@ -8,14 +8,27 @@ const cloudManagerOptionalFields = ['settlementRules', 'attendanceAssignments'];
 const cloudManagerHistoryKey = 'yensense-weekly-history';
 let cloudManagerWorkspace;
 let cloudManagerData;
-let cloudManagerPending = null;
+let cloudManagerPending = null;   // true while there are unsaved edits
 let cloudManagerSaving = false;
 let cloudManagerFailed = false;
+// What the server has, record by record (see store-codec.js), and each record's version.
+let cloudManagerSynced = new Map();
+let cloudManagerVersions = new Map();
+// Records another device changed first: left as they are on the server until reload.
+const cloudManagerBlocked = new Set();
+const cloudManagerChunk = 700000;
 
-function cloudManagerStatus(message, recover = false) {
+function cloudManagerStatus(message, recover = false, reload = false) {
   const node = document.querySelector('#cloud-save-status');
   if (!node) return;
   node.replaceChildren(document.createTextNode(message));
+  if (reload) {
+    const again = document.createElement('button');
+    again.className = 'btn light small';
+    again.textContent = '새로고침';
+    again.onclick = () => location.reload();
+    node.append(' ', again);
+  }
   if (!recover) return;
 
   const download = document.createElement('button');
@@ -48,31 +61,65 @@ const cloudManagerStorage = {
       for (const field of cloudManagerOptionalFields) delete cloudManagerData[field];
       Object.assign(cloudManagerData, JSON.parse(value));
     }
-    cloudManagerPending = JSON.stringify(cloudManagerData);
+    cloudManagerPending = true;
     void cloudManagerFlush();
   },
 };
+
+// Changed records since the last save, split into requests of a safe size.
+// Order records go last so new items are saved before the lists that name them.
+function cloudManagerBatches() {
+  const changes = [];
+  for (const [key, text] of storeDiff(cloudManagerSynced, storeEncode(cloudManagerData))) {
+    if (cloudManagerBlocked.has(key)) continue;
+    const [c, r] = storeSplit(key);
+    const change = text === null ? {c, r, b: cloudManagerVersions.get(key) || 0, del: true} : {c, r, b: cloudManagerVersions.get(key) || 0, d: JSON.parse(text)};
+    changes.push({key, text, change, size: (text || '').length + c.length + r.length + 40});
+  }
+  changes.sort((a, b) => (a.change.c === '#o') - (b.change.c === '#o'));
+  const batches = [];
+  let current = [], size = 0;
+  for (const item of changes) {
+    if (current.length && (size + item.size > cloudManagerChunk || current.length >= 5000)) { batches.push(current); current = []; size = 0; }
+    current.push(item);
+    size += item.size;
+  }
+  if (current.length) batches.push(current);
+  return batches;
+}
 
 async function cloudManagerFlush() {
   if (cloudManagerSaving || cloudManagerFailed) return;
   cloudManagerSaving = true;
   try {
-    while (cloudManagerPending !== null) {
-      const snapshot = cloudManagerPending;
-      cloudManagerStatus('클라우드에 저장 중…');
-      const response = await fetch('/api/workspace', {
-        method: 'PUT',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({data:JSON.parse(snapshot), revision:cloudManagerWorkspace.revision}),
-      });
-      if (!response.ok) {
-        if (response.status === 409) throw new Error('다른 탭이나 기기에서 먼저 저장했습니다. 아래에서 작업 내용을 내려받을 수 있습니다.');
-        throw new Error('클라우드에 저장하지 못했습니다. 아래에서 작업 내용을 내려받을 수 있습니다.');
+    while (cloudManagerPending) {
+      cloudManagerPending = false;
+      for (const batch of cloudManagerBatches()) {
+        cloudManagerStatus('클라우드에 저장 중…');
+        const response = await fetch('/api/workspace/changes', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({changes: batch.map(item => item.change)}),
+        });
+        const result = await response.json().catch(() => ({}));
+        if (response.status === 409 && Array.isArray(result.conflicts) && result.conflicts.length) {
+          for (const {c, r} of result.conflicts) cloudManagerBlocked.add(storeKey(c, r));
+          cloudManagerPending = true;   // save the rest without the conflicting records
+          break;
+        }
+        if (!response.ok) throw new Error('클라우드에 저장하지 못했습니다. 아래에서 작업 내용을 내려받을 수 있습니다.');
+        for (const item of batch) {
+          if (item.text === null) { cloudManagerSynced.delete(item.key); cloudManagerVersions.delete(item.key); }
+          else { cloudManagerSynced.set(item.key, item.text); cloudManagerVersions.set(item.key, result.versions?.[item.key] ?? 0); }
+        }
+        cloudManagerWorkspace.revision = result.revision;
       }
-      cloudManagerWorkspace.revision = (await response.json()).revision;
-      if (cloudManagerPending === snapshot) cloudManagerPending = null;
     }
-    cloudManagerStatus('');
+    if (cloudManagerBlocked.size) {
+      cloudManagerStatus('다른 기기에서 먼저 고친 기록 ' + cloudManagerBlocked.size + '개는 저장하지 않았어요. 새로고침하면 최신 내용이 보여요.', true, true);
+    } else {
+      cloudManagerStatus('');
+    }
   } catch (error) {
     cloudManagerFailed = true;
     cloudManagerStatus(error.message, true);
@@ -94,7 +141,8 @@ function cloudManagerScript(name) {
 async function cloudManagerStart() {
   const app = document.querySelector('#app');
   try {
-    const response = await fetch('/api/workspace');
+    await cloudManagerScript('store-codec.js');
+    const response = await fetch('/api/workspace?versions=1');
     if (response.status === 401 || response.status === 403) {
       location.replace('/');
       return;
@@ -102,6 +150,8 @@ async function cloudManagerStart() {
     if (!response.ok) throw new Error();
     cloudManagerWorkspace = await response.json();
     cloudManagerData = cloudManagerWorkspace.data;
+    cloudManagerSynced = storeEncode(cloudManagerData);
+    cloudManagerVersions = new Map(Object.entries(cloudManagerWorkspace.versions || {}));
     for (const name of ['homework.js','app.js','qrcode.js','integration.js','portal-booking.js','weekly.js','videos.js','ocr.js']) {
       await cloudManagerScript(name);
     }

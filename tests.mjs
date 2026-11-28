@@ -53,6 +53,8 @@ const extraStudent = {id:'another-student',name:'Existing entry'};
 const existing = {students:[existingStudent,extraStudent],classes:[],notes:[]};
 sqlite.prepare("DELETE FROM audit WHERE id='owner-backup-2026-11-19'").run();
 sqlite.prepare("UPDATE workspaces SET data=?,revision=3,file_bytes=10 WHERE owner_id='owner'").run(JSON.stringify(existing));
+// Records live in doc_records after the first read; drop them so the edited blob is read again.
+sqlite.exec("DELETE FROM doc_records WHERE doc IN (SELECT 'w:'||id FROM workspaces WHERE owner_id='owner'); DELETE FROM docs WHERE doc IN (SELECT 'w:'||id FROM workspaces WHERE owner_id='owner')");
 const restoredSession = await (await call('/api/session',admin)).json();
 assert.equal(restoredSession.backup,'imported');
 const restored = await (await call('/api/workspace',admin)).json();
@@ -87,7 +89,7 @@ const managerCode = await (await call('/manager/app.js')).text();
 assert.ok(managerCode.includes('cloudManagerStorage'));
 assert.ok(!managerCode.includes('localStorage'));
 const adapter = await (await call('/manager/bootstrap.js')).text();
-assert.ok(adapter.includes("fetch('/api/workspace'"));
+assert.ok(adapter.includes("fetch('/api/workspace?versions=1'"));assert.ok(adapter.includes("fetch('/api/workspace/changes'"));
 assert.equal((await call('/manager/index.html')).status,404);
 assert.equal((await call('/manager/yennie-app-512.png')).headers.get('Content-Type'),'image/png');
 console.log('PASS original manager shell, cloud adapter and authenticated manager routing.');

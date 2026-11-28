@@ -67,20 +67,20 @@ async function claimOwnerBackup(env, user) {
 
   const backup = ownerBackup(env);
   const current = await env.DB.prepare(
-    'SELECT a.status,w.id,w.data,w.revision FROM accounts a JOIN workspaces w ON w.id=a.workspace_id WHERE a.user_id=? AND w.owner_id=a.user_id'
+    'SELECT a.status,w.id FROM accounts a JOIN workspaces w ON w.id=a.workspace_id WHERE a.user_id=? AND w.owner_id=a.user_id'
   ).bind(user.id).first();
 
   if (current) {
     if (current.status !== 'active') return false;
-    const data = JSON.stringify(mergeBackup(backup, JSON.parse(current.data)));
-    await env.DB.batch([
-      env.DB.prepare('UPDATE workspaces SET data=?,revision=revision+1 WHERE id=? AND owner_id=? AND revision=? AND NOT EXISTS (SELECT 1 FROM audit WHERE id=?)')
-        .bind(data,current.id,user.id,current.revision,marker),
-      env.DB.prepare(`INSERT INTO audit(id,actor_id,workspace_id,action)
-        SELECT ?,?,?,? FROM workspaces WHERE id=? AND owner_id=? AND revision=? AND data=?
-        AND NOT EXISTS (SELECT 1 FROM audit WHERE id=?)`)
-        .bind(marker,user.id,current.id,'workspace.backup.import',current.id,user.id,current.revision+1,data,marker),
-    ]);
+    const doc = await loadWorkspaceData(env, current);
+    try {
+      // The audit marker id is unique, so a second import fails and rolls back.
+      await storeSaveData(env, doc, mergeBackup(backup, doc.data), {revision: doc.revision, extra: [
+        env.DB.prepare('INSERT INTO audit(id,actor_id,workspace_id,action) VALUES(?,?,?,?)').bind(marker,user.id,current.id,'workspace.backup.import'),
+      ]});
+    } catch (error) {
+      if (!(await alreadyImported())) throw error;
+    }
     return Boolean(await alreadyImported());
   }
 
@@ -166,15 +166,28 @@ export async function handle(r,env){const url=new URL(r.url),p=url.pathname;cons
  const exists=await env.DB.prepare('SELECT user_id FROM accounts WHERE user_id=?').bind(u.id).first();if(exists)return json({error:'이미 등록된 계정입니다.'},409);
  const id=uid();await env.DB.batch([env.DB.prepare('INSERT INTO workspaces(id,owner_id,title,data) VALUES(?,?,?,?)').bind(id,u.id,x.title.trim(),JSON.stringify(emptyData())),env.DB.prepare('INSERT INTO accounts(user_id,email,name,workspace_id) VALUES(?,?,?,?)').bind(u.id,u.email,x.name.trim(),id),env.DB.prepare('INSERT INTO audit(id,actor_id,workspace_id,action) VALUES(?,?,?,?)').bind(uid(),u.id,id,'account.register')]);return json({ok:true},201);
  }
- if(p==='/api/admin/accounts'&&r.method==='GET'){await account(env,u);if(!u.admin)return json({error:'전체 관리자 권한이 필요합니다.'},403);const rows=await env.DB.prepare('SELECT a.user_id,a.email,a.name,a.status,a.created_at,a.workspace_id,w.title,w.revision,w.file_bytes FROM accounts a JOIN workspaces w ON w.id=a.workspace_id ORDER BY a.created_at DESC LIMIT 1000').all();await log(env,u,null,'admin.accounts.list');return json({accounts:rows.results})}
+ if(p==='/api/admin/accounts'&&r.method==='GET'){await account(env,u);if(!u.admin)return json({error:'전체 관리자 권한이 필요합니다.'},403);await ensureStoreTables(env);const rows=await env.DB.prepare("SELECT a.user_id,a.email,a.name,a.status,a.created_at,a.workspace_id,w.title,COALESCE(d.revision,w.revision) AS revision,w.file_bytes,d.records,d.bytes AS data_bytes FROM accounts a JOIN workspaces w ON w.id=a.workspace_id LEFT JOIN docs d ON d.doc='w:'||w.id ORDER BY a.created_at DESC LIMIT 1000").all();await log(env,u,null,'admin.accounts.list');return json({accounts:rows.results})}
  if(p==='/api/admin/status'&&r.method==='POST'){await account(env,u);if(!u.admin)return json({error:'전체 관리자 권한이 필요합니다.'},403);const x=await readJson(r,4096);if(!x||typeof x.userId!=='string'||!['active','suspended'].includes(x.status))return json({error:'계정을 선택하세요.'},400);const target=await env.DB.prepare('SELECT * FROM accounts WHERE user_id=?').bind(x.userId).first();if(!target)return json({error:'계정을 찾을 수 없습니다.'},404);if(target.email.toLowerCase()===env.SUPERADMIN_EMAIL.toLowerCase())return json({error:'전체 관리자 계정은 정지할 수 없습니다.'},400);await env.DB.batch([env.DB.prepare('UPDATE accounts SET status=? WHERE user_id=?').bind(x.status,x.userId),env.DB.prepare('INSERT INTO audit(id,actor_id,workspace_id,action) VALUES(?,?,?,?)').bind(uid(),u.id,target.workspace_id,'account.'+x.status)]);return json({ok:true})}
  const {w}=await workspace(env,u,url);
  if(p.startsWith('/api/booking/')) {
   if(w.owner_id!==u.id)return json({error:'본인 작업 공간에서만 학생 포털을 운영할 수 있습니다.'},403);
   return portalAdmin(r,env,url,w);
  }
- if(p==='/api/workspace'&&r.method==='GET'){if(w.owner_id!==u.id)await log(env,u,w.id,'admin.workspace.read');return json({id:w.id,title:w.title,data:JSON.parse(w.data),revision:w.revision})}
- if(p==='/api/workspace'&&r.method==='PUT'){const x=await readJson(r);if(!x||!Number.isSafeInteger(x.revision)||x.revision<0)return json({error:'저장 버전을 확인하세요.'},400);const data=JSON.stringify(checkData(x.data));const res=await env.DB.batch([env.DB.prepare('UPDATE workspaces SET data=?,revision=revision+1 WHERE id=? AND revision=?').bind(data,w.id,x.revision),env.DB.prepare('INSERT INTO audit(id,actor_id,workspace_id,action) SELECT ?,?,?,? WHERE changes()>0').bind(uid(),u.id,w.id,u.admin&&w.owner_id!==u.id?'admin.workspace.update':'workspace.update')]);if(!res[0].meta.changes)return json({error:'다른 탭이나 기기에서 먼저 변경했습니다. 새로 불러온 뒤 다시 수정해 주세요.'},409);return json({revision:x.revision+1})}
+ if(p==='/api/workspace'&&r.method==='GET'){const doc=await loadWorkspaceData(env,w);if(w.owner_id!==u.id)await log(env,u,w.id,'admin.workspace.read');return json({id:w.id,title:w.title,data:doc.data,revision:doc.revision,...(url.searchParams.get('versions')==='1'?{versions:storeVersions(doc)}:{})})}
+ if(p==='/api/workspace/changes'&&r.method==='POST'){
+  const x=await readJson(r);if(!x||!Array.isArray(x.changes)||!x.changes.length||x.changes.length>20000)return json({error:'저장 형식을 확인해 주세요.'},400);
+  const changes=x.changes.map(storeCheckChange);if(new Set(changes.map(c=>c.key)).size!==changes.length)return json({error:'저장 형식을 확인해 주세요.'},400);
+  let result;
+  try{result=await storeApply(env,workspaceDoc(w.id),changes)}
+  catch(e){
+   if(e?.status===404){await loadWorkspaceData(env,w);try{result=await storeApply(env,workspaceDoc(w.id),changes)}catch(e2){if(e2?.status===409)return json({error:e2.message,conflicts:e2.conflicts},409);throw e2}}
+   else if(e?.status===409)return json({error:e.message,conflicts:e.conflicts},409);
+   else throw e;
+  }
+  await log(env,u,w.id,u.admin&&w.owner_id!==u.id?'admin.workspace.update':'workspace.update');
+  return json(result);
+ }
+ if(p==='/api/workspace'&&r.method==='PUT'){const x=await readJson(r);if(!x||!Number.isSafeInteger(x.revision)||x.revision<0)return json({error:'저장 버전을 확인하세요.'},400);const data=checkData(x.data);const doc=await loadWorkspaceData(env,w);if(doc.revision!==x.revision)return json({error:'다른 탭이나 기기에서 먼저 변경했습니다. 새로 불러온 뒤 다시 수정해 주세요.'},409);let result;try{result=await storeSaveData(env,doc,data,{revision:x.revision,extra:[env.DB.prepare('INSERT INTO audit(id,actor_id,workspace_id,action) VALUES(?,?,?,?)').bind(uid(),u.id,w.id,u.admin&&w.owner_id!==u.id?'admin.workspace.update':'workspace.update')]})}catch(e){if(e?.status===409)return json({error:'다른 탭이나 기기에서 먼저 변경했습니다. 새로 불러온 뒤 다시 수정해 주세요.'},409);throw e}return json({revision:result.revision})}
  if(p==='/api/files'&&r.method==='GET'){const rows=await env.DB.prepare('SELECT id,name,mime,size,created_at FROM files WHERE workspace_id=? ORDER BY created_at DESC LIMIT 1000').bind(w.id).all();if(w.owner_id!==u.id)await log(env,u,w.id,'admin.files.list');return json({files:rows.results})}
  if(p==='/api/files'&&r.method==='POST'){
  if(!env.BUCKET)return json({error:'파일 저장소 연결이 필요합니다.'},503);const bytes=await readBody(r,10*1024*1024),mime=r.headers.get('content-type')?.split(';')[0]||'';let name;try{name=decodeURIComponent(r.headers.get('x-file-name')||'')}catch{return json({error:'파일 이름을 확인하세요.'},400)}

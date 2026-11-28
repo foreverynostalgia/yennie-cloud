@@ -37,3 +37,13 @@ backups, registration and account management. Migration of the private app's
 calendar, student PIN portal, homework delivery and grading workflows is not
 part of this public service version. Existing private app backups can be
 explicitly imported; no existing records were copied automatically.
+
+Record store (2026-11-28). Workspace and student-portal data are stored as one
+row per record in `doc_records` (doc `w:<workspace>` / `p:<workspace>`), not as
+one JSON blob, so a teacher's data is no longer capped by the D1 row size. Every
+read and write still resolves the workspace server-side from the signed-in
+account. Saves send only changed records with the version they were based on;
+a record changed elsewhere first is refused (409) and reported by key, other
+records still save. A per-doc revision guard makes each save atomic. The old
+blobs (`workspaces.data`, `student_portals.data`) are copied once on first read
+and left untouched as a rollback copy.
