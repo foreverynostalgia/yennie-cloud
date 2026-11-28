@@ -164,6 +164,11 @@ async function cloudManagerStart() {
     app.before(status);
     initReport();
     await syncRemote();
+    try {
+      const usage = await (await fetch('/api/usage')).json();
+      const words = {'students-80': '학생 수가 요금제 한도의 80%를 넘었어요.', 'students-full': '학생 수가 요금제 한도에 닿았어요.', 'files-80': '파일 보관 용량의 80%를 넘었어요.', 'files-full': '파일 보관 용량이 가득 찼어요.'};
+      if (usage.warn?.length && !cloudManagerPending) cloudManagerStatus(usage.warn.map(w => words[w]).join(' ') + ' 계정 · 자료실 → 설정에서 확인할 수 있어요.');
+    } catch {}
   } catch (error) {
     const message = document.createElement('p');
     message.textContent = error.message || '관리자 화면을 불러오지 못했습니다. 새로고침해 주세요.';
